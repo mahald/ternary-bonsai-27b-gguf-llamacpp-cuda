@@ -20,7 +20,7 @@ services:
       -fa on
       --cache-type-k q4_0
       --cache-type-v q4_0
-      --temp 0.6
+      --temp 0.4
       --top-p 0.95
       --top-k 20
       --min-p 0.0
