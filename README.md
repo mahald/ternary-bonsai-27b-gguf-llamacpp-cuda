@@ -59,11 +59,11 @@ services:
       -fa on
       --cache-type-k q4_0
       --cache-type-v q4_0
-      --temp 0.4
+      --temp 0.6
       --top-p 0.95
       --top-k 20
       --min-p 0.0
-      --presence-penalty 0.0
+      --presence-penalty 0.3
       --repeat-penalty 1.0
     deploy:
       resources:
@@ -79,11 +79,12 @@ Notes:
 - **Context 184320 (180K)** with flash attention and 4-bit KV cache. The model
   supports 262K, but that needs ~12.8 GB VRAM. At 180K, usage is ~11.7 of
   12.3 GiB — reduce `-c` if you hit OOM, or raise it on bigger GPUs.
-- **Sampling defaults** are set server-side (`--temp 0.4 --top-p 0.95
-  --top-k 20 --min-p 0.0 --presence-penalty 0.0 --repeat-penalty 1.0`); they
-  apply to any request that doesn't send its own values. Temperature is
-  lowered from the model card's 0.7 for coding use — don't go much lower:
-  thinking models tend to fall into repetition loops near-greedy.
+- **Sampling defaults** are set server-side (`--temp 0.6 --top-p 0.95
+  --top-k 20 --min-p 0.0 --presence-penalty 0.3 --repeat-penalty 1.0`); they
+  apply to any request that doesn't send its own values. The mild presence
+  penalty guards against the repetition loops thinking models are prone to;
+  set it to 0.0 for maximum code fidelity. Don't lower the temperature much —
+  near-greedy decoding makes reasoning models loop.
 - **Repetition loops?** Stick to the neutral sampling defaults first. In our
   testing, enabling the DRY sampler (`--dry-multiplier 0.8`) made this model
   hallucinate — thinking models legitimately repeat phrases while reasoning,
