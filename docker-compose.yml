@@ -26,6 +26,7 @@ services:
       --min-p 0.0
       --presence-penalty 0.0
       --repeat-penalty 1.0
+      --dry-multiplier 0.8
     deploy:
       resources:
         reservations:
