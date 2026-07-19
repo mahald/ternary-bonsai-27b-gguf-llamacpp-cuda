@@ -82,10 +82,11 @@ Notes:
 - **Sampling defaults** are set server-side (`--temp 0.6 --top-p 0.95
   --top-k 20 --min-p 0.0 --presence-penalty 0.0 --repeat-penalty 1.0`); they
   apply to any request that doesn't send its own values.
-- **Repetition loops?** If the model gets stuck repeating itself, add
-  `--dry-multiplier 0.8` (DRY sampler): it exponentially penalizes tokens
-  that would extend a verbatim repeat of an earlier sequence, while leaving
-  normal prose alone.
+- **Repetition loops?** Stick to the neutral sampling defaults first. In our
+  testing, enabling the DRY sampler (`--dry-multiplier 0.8`) made this model
+  hallucinate — thinking models legitimately repeat phrases while reasoning,
+  and DRY forces them off the correct path. If loops persist, try a mild
+  `--presence-penalty 0.3` instead.
 - Use `Ternary-Bonsai-27B-Q2_0.gguf` (g128). The `Q2_g64` variant does **not**
   load with the current fork master (`QK2_0 = 128` expects the g128 packing).
 - Measured: ~44 tok/s generation on an RTX 4080 Laptop GPU.
