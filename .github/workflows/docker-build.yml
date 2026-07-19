@@ -43,3 +43,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Sync README.md as the Docker Hub repo description.
+      # Needs a token with "Read, Write, Delete" scope; failure here must not
+      # fail the image build.
+      - name: Sync README to Docker Hub
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda
+          short-description: "Ternary Bonsai 27B GGUF on llama.cpp (PrismML fork), CUDA — OpenAI-compatible API"
