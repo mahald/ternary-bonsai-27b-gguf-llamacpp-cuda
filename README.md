@@ -135,9 +135,12 @@ Locally:
 docker build -t mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:dev .
 ```
 
-The Dockerfile pins the fork commit (`LLAMACPP_REF`) and compiles for CUDA
-architecture 8.9 (Ada / RTX 40xx) by default; override with
-`--build-arg CUDA_DOCKER_ARCH="80;86;89;90"` for a broader image.
+The Dockerfile pins the fork commit (`LLAMACPP_REF`). By default it compiles
+for a broad multi-arch CUDA set (ggml's default; Turing through
+Hopper/Blackwell), so the published images run on most NVIDIA GPUs. The
+container ships its own CUDA 12.8 runtime — the host only needs a reasonably
+recent NVIDIA driver. For a much faster local build, narrow the target to
+your GPU, e.g. `--build-arg CUDA_DOCKER_ARCH=89` (Ada / RTX 40xx).
 
 CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
