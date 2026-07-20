@@ -1,22 +1,24 @@
 services:
   bonsai:
-    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v1
+    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v2
     container_name: bonsai-27b
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
       - ./models:/models:ro
-    # llama-server args: Modell, Alias für die OpenAI-API, alle Layer auf GPU,
-    # 180K Kontext mit Flash Attention + 4-Bit-KV-Cache (12 GB VRAM fast voll),
+    # llama-server args: Modell (g64-Packing, passend zum v2-Image aus
+    # upstream master + CUDA-PR #25707), Alias für die OpenAI-API, alle Layer
+    # auf GPU, 150K Kontext mit Flash Attention + 4-Bit-KV-Cache (g64-Datei
+    # ist 0,42 GB größer als g128 — 180K passt nicht mehr in 12 GB VRAM),
     # Sampling-Defaults serverseitig gesetzt (pi kennt keine Sampling-Settings)
     command: >
-      -m /models/Ternary-Bonsai-27B-Q2_0.gguf
+      -m /models/Ternary-Bonsai-27B-Q2_g64.gguf
       -a bonsai-27b
       --host 0.0.0.0
       --port 8080
       -ngl 99
-      -c 184320
+      -c 153600
       -fa on
       --cache-type-k q4_0
       --cache-type-v q4_0

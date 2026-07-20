@@ -3,10 +3,15 @@ ARG CUDA_VERSION=12.8.1
 
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build
 
-# PrismML fork of llama.cpp — required for the Q2_0 ternary kernels
-# (upstream llama.cpp cannot load the Bonsai Q2_0 GGUF format).
-ARG LLAMACPP_REPO=https://github.com/PrismML-Eng/llama.cpp
-ARG LLAMACPP_REF=9fcaed763ccda38ea81068ad9d7f991aaddca451
+# Official llama.cpp master plus the open CUDA Q2_0 PR (#25707, by PrismML).
+# The pinned ref is GitHub's precomputed merge commit of refs/pull/25707/merge
+# (master 4937ca83 + PR head 5eec7982). GitHub recomputes that ref as master
+# moves, so if the fetch below ever fails, re-resolve it with
+#   git ls-remote https://github.com/ggml-org/llama.cpp refs/pull/25707/merge
+# and update LLAMACPP_REF. Once the PR is merged, pin a master commit instead.
+# This build expects the g64 packing (QK2_0=64): use Ternary-Bonsai-*-Q2_g64.gguf.
+ARG LLAMACPP_REPO=https://github.com/ggml-org/llama.cpp
+ARG LLAMACPP_REF=57f11de0e1d4ff48dd8722e1fe8d65535bb499cd
 # CUDA architectures to compile for. "default" lets ggml pick its broad
 # multi-arch set (Turing through Hopper/Blackwell) — use this for published
 # images. For a fast local build, narrow it to your GPU, e.g.

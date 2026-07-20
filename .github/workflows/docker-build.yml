@@ -55,4 +55,4 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda
-          short-description: "Ternary Bonsai 27B GGUF on llama.cpp (PrismML fork), CUDA — OpenAI-compatible API"
+          short-description: "Ternary Bonsai 27B GGUF on llama.cpp (master + CUDA Q2_0 PR), OpenAI-compatible API"
