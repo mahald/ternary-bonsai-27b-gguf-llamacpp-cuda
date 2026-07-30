@@ -178,6 +178,23 @@ CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
 repo secrets).
 
+## DSpark drafter — not recommended
+
+The HF repo also ships a DSpark speculative-decoding drafter
+(`Ternary-Bonsai-27B-dspark-Q4_1.gguf`). It only loads with `:v1`: the file
+uses the PrismML fork's own format (GGUF architecture `dspark`, g128
+embedding), which official llama.cpp — and therefore `:v2`/`:v3` — rejects
+(upstream's DSpark implementation only supports DeepSeek-style `dflash`
+drafters).
+
+Even on `:v1` it makes no sense on consumer hardware, especially laptop GPUs
+with limited VRAM: the drafter costs ~5 GB extra (~2 GB weights plus a ~3 GB
+spec-decoding buffer that does not shrink with context), which collapses the
+usable context window — and once layers spill to the CPU it is a net
+*slowdown* (measured on a 12 GB RTX 4080 Laptop). prism-ml's 1.34× speedup
+figure was measured on an H100 (80 GB). Skip the drafter unless you run `:v1`
+on a large-VRAM card.
+
 ## License
 
 Setup files: MIT. llama.cpp is MIT, the Bonsai model is Apache 2.0
