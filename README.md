@@ -4,18 +4,19 @@ Docker image and compose setup for serving
 [prism-ml/Ternary-Bonsai-27B-gguf](https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf)
 with CUDA and an OpenAI-compatible API.
 
-The current image (`:v2` / `:latest`) builds **official llama.cpp master plus
-the open CUDA Q2_0 PR [#25707](https://github.com/ggml-org/llama.cpp/pull/25707)**
-(pinned merge commit). Upstream already merged the Q2_0 CPU, Metal, and Vulkan
-backends; CUDA is the last missing piece and this image carries that PR until
-it lands.
+The current image (`:v3` / `:latest`) builds **plain official llama.cpp
+master** — the CUDA Q2_0 backend
+([PR #25707](https://github.com/ggml-org/llama.cpp/pull/25707)) was merged
+upstream on 2026-07-30, so all Q2_0 backends (CPU, Metal, Vulkan, CUDA) are
+now upstream and no patches are carried anymore.
 
 Pick the model file that matches the image tag — the two Q2_0 packings are
 **incompatible**:
 
 | Image tag | llama.cpp source | Model file |
 |---|---|---|
-| `:v2`, `:latest` | official master + PR #25707 (g64, `QK2_0=64`) | `Ternary-Bonsai-27B-Q2_g64.gguf` |
+| `:v3`, `:latest` | official master (CUDA Q2_0 merged; g64, `QK2_0=64`) | `Ternary-Bonsai-27B-Q2_g64.gguf` |
+| `:v2` | official master + then-open PR #25707 (g64, `QK2_0=64`) | `Ternary-Bonsai-27B-Q2_g64.gguf` |
 | `:v1` | [PrismML fork](https://github.com/PrismML-Eng/llama.cpp) (g128, `QK2_0=128`) | `Ternary-Bonsai-27B-Q2_0.gguf` |
 
 - Image: `mhald/ternary-bonsai-27b-gguf-llamacpp-cuda` (see [Links](#links))
@@ -25,7 +26,7 @@ Pick the model file that matches the image tag — the two Q2_0 packings are
 ## Quickstart
 
 ```bash
-# 1. Download the model (7.59 GB, g64 packing for the :v2/:latest image)
+# 1. Download the model (7.59 GB, g64 packing for :v2 and newer)
 mkdir -p models
 curl -L -o models/Ternary-Bonsai-27B-Q2_g64.gguf \
   https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf/resolve/main/Ternary-Bonsai-27B-Q2_g64.gguf
@@ -53,7 +54,7 @@ The [`docker-compose.yml`](docker-compose.yml) in this repo, tuned for a
 ```yaml
 services:
   bonsai:
-    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v2
+    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v3
     container_name: bonsai-27b
     restart: unless-stopped
     ports:
@@ -102,10 +103,11 @@ Notes:
   hallucinate — thinking models legitimately repeat phrases while reasoning,
   and DRY forces them off the correct path. If loops persist, try a mild
   `--presence-penalty 0.3` instead.
-- Use `Ternary-Bonsai-27B-Q2_g64.gguf` with `:v2`/`:latest`. The old
+- Use `Ternary-Bonsai-27B-Q2_g64.gguf` with `:v2` and newer. The old
   `Q2_0.gguf` (g128) does **not** load with these images — it only works with
   `:v1` (PrismML fork, `QK2_0 = 128`).
-- Measured: ~39 tok/s generation on an RTX 4080 Laptop GPU (v1/g128: ~44 tok/s).
+- Measured: ~42 tok/s generation on an RTX 4080 Laptop GPU with v3
+  (v2: ~39 tok/s, v1/g128: ~44 tok/s).
 
 ## Using with the pi agent
 
@@ -162,13 +164,10 @@ Locally:
 docker build -t mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:dev .
 ```
 
-The Dockerfile pins `LLAMACPP_REF` to GitHub's merge commit of
-`refs/pull/25707/merge` (official master + the open CUDA Q2_0 PR). GitHub
-recomputes that ref as master moves — if the fetch fails during a build,
-re-resolve it with
-`git ls-remote https://github.com/ggml-org/llama.cpp refs/pull/25707/merge`
-and update `LLAMACPP_REF`. Once the PR is merged, a plain master commit will
-be pinned instead. By default the image compiles
+The Dockerfile pins `LLAMACPP_REF` to an official llama.cpp master commit
+(since v3; the CUDA Q2_0 PR #25707 is merged upstream). To move to a newer
+llama.cpp, update `LLAMACPP_REF` to a newer master commit. By default the
+image compiles
 for a broad multi-arch CUDA set (ggml's default; Turing through
 Hopper/Blackwell), so the published images run on most NVIDIA GPUs. The
 container ships its own CUDA 12.8 runtime — the host only needs a reasonably
@@ -181,16 +180,16 @@ repo secrets).
 
 ## License
 
-Setup files: MIT. llama.cpp (PrismML fork) and the Bonsai model are Apache 2.0
+Setup files: MIT. llama.cpp is MIT, the Bonsai model is Apache 2.0
 (see their repositories).
 
 ## Links
 
 - **Docker Hub (built images):**
   [mhald/ternary-bonsai-27b-gguf-llamacpp-cuda](https://hub.docker.com/r/mhald/ternary-bonsai-27b-gguf-llamacpp-cuda)
-  — `:latest` (tracks `main`) · `:v2` (master + PR #25707, g64) · `:v1` (PrismML fork, g128)
+  — `:latest` (tracks `main`) · `:v3` (official master, g64) · `:v2` (master + PR #25707, g64) · `:v1` (PrismML fork, g128)
 - **This repo:** https://github.com/mahald/ternary-bonsai-27b-gguf-llamacpp-cuda
 - **Model:** https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf
-- **CUDA Q2_0 PR (in `:v2`):** https://github.com/ggml-org/llama.cpp/pull/25707
+- **CUDA Q2_0 PR (merged upstream, in `:v2` and newer):** https://github.com/ggml-org/llama.cpp/pull/25707
 - **llama.cpp fork (g128 kernels, in `:v1`):** https://github.com/PrismML-Eng/llama.cpp
 - **Whitepaper & demos:** https://github.com/PrismML-Eng/Bonsai-demo
