@@ -29,16 +29,28 @@ Pick the model file that matches the image tag — the two Q2_0 packings are
 
 ## Quickstart
 
+Use the compose file from this repo — it pins `-ngl`, `-c` and the KV-cache
+types. Running the image with your own bare `docker run` command instead is
+the classic footgun: without those arguments, current llama.cpp defaults to
+`-ngl auto` with `--fit on` and will **silently keep part of a model that
+doesn't fit in system RAM** — the server starts without any error and
+generates correctly, just ~10× slower (all CPU cores at 100 %). See
+[Troubleshooting](#troubleshooting-slow-inference-all-cpu-cores-at-100-).
+
 ```bash
-# 1. Download the model (7.59 GB, g64 packing for :v2 and newer)
+# 1. Get the compose setup
+git clone https://github.com/mahald/ternary-bonsai-27b-gguf-llamacpp-cuda.git
+cd ternary-bonsai-27b-gguf-llamacpp-cuda
+
+# 2. Download the model (7.59 GB, g64 packing for :v2 and newer)
 mkdir -p models
 curl -L -o models/Ternary-Bonsai-27B-Q2_g64.gguf \
   https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf/resolve/main/Ternary-Bonsai-27B-Q2_g64.gguf
 
-# 2. Start (needs Docker with NVIDIA container toolkit)
+# 3. Start (needs Docker with NVIDIA container toolkit)
 docker compose up -d
 
-# 3. Test
+# 4. Test
 curl http://127.0.0.1:8080/v1/chat/completions -H 'Content-Type: application/json' -d '{
   "model": "bonsai-27b",
   "messages": [{"role": "user", "content": "Hello!"}],
@@ -112,6 +124,36 @@ Notes:
   `:v1` (PrismML fork, `QK2_0 = 128`).
 - Measured: ~42 tok/s generation on an RTX 4080 Laptop GPU with v3
   (v2: ~39 tok/s, v1/g128: ~44 tok/s).
+
+## Troubleshooting: slow inference, all CPU cores at 100 %
+
+If the server starts cleanly, generates correct output, but runs ~10× slower
+than expected with every CPU core pegged — the model is (partly) running from
+system RAM. Bonsai is a **dense** model: whatever share doesn't compute in
+VRAM streams through system memory on every token, so there is no graceful
+middle ground. Two llama.cpp defaults cause this silently:
+
+- **`-ngl auto` + `--fit on`** (the defaults when you don't pass `-ngl`/`-c`):
+  instead of failing on OOM, llama.cpp fills VRAM up to a margin and quietly
+  keeps the remaining layers and KV cache in system RAM, auto-trimming the
+  context. No error is printed. The compose file avoids this by pinning
+  `-ngl 99` and `-c` — with those set, a config that doesn't fit fails
+  **loudly** at startup, which is what you want.
+- **mmproj auto-load**: if the vision projector
+  (`Ternary-Bonsai-27B-mmproj-*.gguf`) sits next to the model file,
+  llama-server auto-discovers it (`--mmproj-auto` defaults to on) and places
+  it on the GPU first, taking ~1+ GB of VRAM before the text weights. Move it
+  out of the models directory or pass `--no-mmproj` unless you want image
+  input (then budget ~1+ GB of context headroom for it).
+
+To diagnose, append `-v` to the `command:` arguments and check `docker logs`
+for where the buffers land (`CUDA0 model buffer size` vs `CPU model buffer
+size`, `offloaded X/Y layers to GPU`) and for the CUDA device table
+(`ggml_cuda_init: found N CUDA devices`).
+
+Context sizing with `-fa on` and q4_0 KV cache: `-c 153600` fits 12 GB
+(~11.3 GiB used); on 16 GB the full `-c 262144` fits (~14 GiB). If it OOMs,
+step `-c` down — the loud failure marks your card's real maximum.
 
 ## Using with the pi agent
 
