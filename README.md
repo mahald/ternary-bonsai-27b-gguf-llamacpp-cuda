@@ -125,36 +125,6 @@ Notes:
 - Measured: ~42 tok/s generation on an RTX 4080 Laptop GPU with v3
   (v2: ~39 tok/s, v1/g128: ~44 tok/s).
 
-## Troubleshooting: slow inference, all CPU cores at 100 %
-
-If the server starts cleanly, generates correct output, but runs ~10× slower
-than expected with every CPU core pegged — the model is (partly) running from
-system RAM. Bonsai is a **dense** model: whatever share doesn't compute in
-VRAM streams through system memory on every token, so there is no graceful
-middle ground. Two llama.cpp defaults cause this silently:
-
-- **`-ngl auto` + `--fit on`** (the defaults when you don't pass `-ngl`/`-c`):
-  instead of failing on OOM, llama.cpp fills VRAM up to a margin and quietly
-  keeps the remaining layers and KV cache in system RAM, auto-trimming the
-  context. No error is printed. The compose file avoids this by pinning
-  `-ngl 99` and `-c` — with those set, a config that doesn't fit fails
-  **loudly** at startup, which is what you want.
-- **mmproj auto-load**: if the vision projector
-  (`Ternary-Bonsai-27B-mmproj-*.gguf`) sits next to the model file,
-  llama-server auto-discovers it (`--mmproj-auto` defaults to on) and places
-  it on the GPU first, taking ~1+ GB of VRAM before the text weights. Move it
-  out of the models directory or pass `--no-mmproj` unless you want image
-  input (then budget ~1+ GB of context headroom for it).
-
-To diagnose, append `-v` to the `command:` arguments and check `docker logs`
-for where the buffers land (`CUDA0 model buffer size` vs `CPU model buffer
-size`, `offloaded X/Y layers to GPU`) and for the CUDA device table
-(`ggml_cuda_init: found N CUDA devices`).
-
-Context sizing with `-fa on` and q4_0 KV cache: `-c 153600` fits 12 GB
-(~11.3 GiB used); on 16 GB the full `-c 262144` fits (~14 GiB). If it OOMs,
-step `-c` down — the loud failure marks your card's real maximum.
-
 ## Using with the pi agent
 
 Example for the [pi coding agent](https://pi.dev) — add the server as a
@@ -201,6 +171,36 @@ server's `-c` value.
 > (`pi install npm:pi-effort`) with the reasoning effort set to `medium`
 > (`/effort medium`). Other effort levels and clients should work but see less
 > coverage.
+
+## Troubleshooting: slow inference, all CPU cores at 100 %
+
+If the server starts cleanly, generates correct output, but runs ~10× slower
+than expected with every CPU core pegged — the model is (partly) running from
+system RAM. Bonsai is a **dense** model: whatever share doesn't compute in
+VRAM streams through system memory on every token, so there is no graceful
+middle ground. Two llama.cpp defaults cause this silently:
+
+- **`-ngl auto` + `--fit on`** (the defaults when you don't pass `-ngl`/`-c`):
+  instead of failing on OOM, llama.cpp fills VRAM up to a margin and quietly
+  keeps the remaining layers and KV cache in system RAM, auto-trimming the
+  context. No error is printed. The compose file avoids this by pinning
+  `-ngl 99` and `-c` — with those set, a config that doesn't fit fails
+  **loudly** at startup, which is what you want.
+- **mmproj auto-load**: if the vision projector
+  (`Ternary-Bonsai-27B-mmproj-*.gguf`) sits next to the model file,
+  llama-server auto-discovers it (`--mmproj-auto` defaults to on) and places
+  it on the GPU first, taking ~1+ GB of VRAM before the text weights. Move it
+  out of the models directory or pass `--no-mmproj` unless you want image
+  input (then budget ~1+ GB of context headroom for it).
+
+To diagnose, append `-v` to the `command:` arguments and check `docker logs`
+for where the buffers land (`CUDA0 model buffer size` vs `CPU model buffer
+size`, `offloaded X/Y layers to GPU`) and for the CUDA device table
+(`ggml_cuda_init: found N CUDA devices`).
+
+Context sizing with `-fa on` and q4_0 KV cache: `-c 153600` fits 12 GB
+(~11.3 GiB used); on 16 GB the full `-c 262144` fits (~14 GiB). If it OOMs,
+step `-c` down — the loud failure marks your card's real maximum.
 
 ## Building
 
