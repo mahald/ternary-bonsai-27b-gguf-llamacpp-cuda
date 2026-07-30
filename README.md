@@ -23,6 +23,10 @@ Pick the model file that matches the image tag — the two Q2_0 packings are
 - Endpoint: `http://127.0.0.1:8080/v1` (`/v1/chat/completions`, `/v1/models`, …), no API key
 - Model name: `bonsai-27b`, web UI at http://127.0.0.1:8080
 
+> **Note:** the HF repo also ships a DSpark speculative-decoding drafter —
+> it only works with `:v1` and is not worth it on limited-VRAM hardware; see
+> [DSpark drafter — not recommended](#dspark-drafter--not-recommended).
+
 ## Quickstart
 
 ```bash
