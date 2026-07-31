@@ -169,7 +169,7 @@ custom provider in `~/.pi/agent/models.json`:
           "reasoning": true,
           "input": ["text"],
           "contextWindow": 185000,
-          "maxTokens": 8192,
+          "maxTokens": 16384,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }
       ]
