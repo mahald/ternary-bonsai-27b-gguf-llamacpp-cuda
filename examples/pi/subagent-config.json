@@ -1,0 +1,6 @@
+{
+	"globalConcurrencyLimit": 2,
+	"parallel": {
+		"concurrency": 2
+	}
+}

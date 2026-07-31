@@ -1,0 +1,10 @@
+{
+  "defaultProvider": "bonsai-local",
+  "defaultModel": "bonsai-27b",
+  "defaultThinkingLevel": "medium",
+  "packages": [
+    "npm:pi-subagents",
+    "npm:pi-effort",
+    "npm:pi-memory"
+  ]
+}

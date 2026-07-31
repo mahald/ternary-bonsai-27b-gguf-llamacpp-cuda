@@ -1,3 +1,5 @@
 models/
 llama.cpp/
 *.gguf
+# pi-subagents runtime artifacts (subagent transcripts can contain sensitive data)
+.pi-subagents/

@@ -1,0 +1,27 @@
+{
+  "providers": {
+    "bonsai-local": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "none",
+      "models": [
+        {
+          "id": "bonsai-27b",
+          "name": "Ternary Bonsai 27B (local)",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 180000,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}

@@ -13,16 +13,18 @@ services:
       --host 0.0.0.0
       --port 8080
       -ngl 99
-      -np 2
-      -c 185000
+      -np 3
+      -c 180000
       --kv-unified
       --no-mmproj
       --cache-type-k q4_0
       --cache-type-v q4_0
-      --temp 0.6
+      --temp 0.7
       --top-p 0.95
       --top-k 20
-      --min-p 0.0
+      --min-p 0.1
+      --xtc-probability 0.8
+      --xtc-threshold 0.2
       --presence-penalty 0.3
       --repeat-penalty 1.0
       --cache-ram 4096

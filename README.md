@@ -83,16 +83,18 @@ services:
       --host 0.0.0.0
       --port 8080
       -ngl 99
-      -np 2
-      -c 185000
+      -np 3
+      -c 180000
       --kv-unified
       --no-mmproj
       --cache-type-k q4_0
       --cache-type-v q4_0
-      --temp 0.6
+      --temp 0.7
       --top-p 0.95
       --top-k 20
-      --min-p 0.0
+      --min-p 0.1
+      --xtc-probability 0.8
+      --xtc-threshold 0.2
       --presence-penalty 0.3
       --repeat-penalty 1.0
       --cache-ram 4096
@@ -108,21 +110,32 @@ services:
 
 Notes:
 
-- **Context 185000 (~180K)** with 4-bit KV cache and the vision projector
-  disabled (`--no-mmproj`). The model supports 262K, but 185000 is the
-  practical limit on 12 GB. Reduce `-c` if you hit OOM, or raise it on bigger
-  GPUs.
+- **Context 180000 (~180K)** with **q4_0 KV cache** and the vision projector
+  disabled (`--no-mmproj`). The model supports 262K; 180000 is the practical
+  limit on 12 GB when also running 3 parallel slots (185K is the max with 2
+  slots; the CUDA compute buffers grow with context, so 185K + `-np 3`
+  OOMs). Reduce `-c` if you hit OOM, or raise it on bigger GPUs.
+- **KV cache at q4_0 for context, not q8_0**: on a 12 GB card you have to
+  choose — q8_0 KV buys better attention fidelity (the model card measured its
+  headline benchmarks with an FP16 cache) but only ~110K of context; q4_0
+  doubles that to ~180K at a small long-range-coherence cost. This repo
+  defaults to q4_0 because for long agentic sessions context is the scarcer
+  resource. On a 16 GB card, q4_0 KV fits the full `-c 262144`, q8_0 fits
+  ~200K.
 - **`--no-mmproj`** keeps the vision projector
   (`Ternary-Bonsai-27B-mmproj-*.gguf`) from auto-loading onto the GPU, which
   frees ~1+ GB of VRAM for context. If you want image input, remove
   `--no-mmproj` (llama-server then auto-discovers the mmproj file next to the
   model, or point at it explicitly with `--mmproj`) **and reduce `-c`** (back
   toward ~150K on 12 GB) to make room for the projector.
-- **`-np 2` + `--kv-unified`**: two parallel server slots on one unified
-  KV-cache pool. Without `--kv-unified`, each slot would get a fixed half of
-  `-c` (92500 tokens); with the unified cache, a single request can still use
-  the full 185000-token context while the second slot stays available for a
-  concurrent request.
+- **`-np 3` + `--kv-unified`**: three parallel server slots on one unified
+  KV-cache pool. Without `--kv-unified`, each slot would get a fixed third of
+  `-c` (60000 tokens); with the unified cache, a single request can still use
+  the full 180000-token context while the other slots stay available for
+  concurrent requests (e.g. parallel pi subagents). This is the most slots
+  that fit 12 GB — each slot needs its own compute buffers, and `-np 4`
+  OOMs (`CUDA error: out of memory` at startup).
+
 - **No `-fa on`**: flash attention defaults to `auto` in current llama.cpp,
   which already enables it wherever it is supported — setting `-fa on` is
   redundant and force-enables it even in combinations (changed KV-cache quant
@@ -133,12 +146,18 @@ Notes:
   device table (see
   [Troubleshooting](#troubleshooting-slow-inference-all-cpu-cores-at-100-)).
 - **`--cache-ram 4096`** caps the host-RAM prompt cache at 4 GiB.
-- **Sampling defaults** are set server-side (`--temp 0.6 --top-p 0.95
-  --top-k 20 --min-p 0.0 --presence-penalty 0.3 --repeat-penalty 1.0`); they
-  apply to any request that doesn't send its own values. The mild presence
-  penalty guards against the repetition loops thinking models are prone to;
-  set it to 0.0 for maximum code fidelity. Don't lower the temperature much —
-  near-greedy decoding makes reasoning models loop.
+- **Sampling defaults** are set server-side (`--temp 0.7 --top-p 0.95
+  --top-k 20 --min-p 0.1 --xtc-probability 0.8 --xtc-threshold 0.2
+  --presence-penalty 0.3 --repeat-penalty 1.0`); they apply to any request
+  that doesn't send its own values. `temp 0.7`, `top-p 0.95` and `top-k 20`
+  are the model card's own eval values. On top of those, `min-p 0.1` trims the
+  low-probability tail, and XTC (exclude-top-choices, probability 0.8 /
+  threshold 0.2) prevents the sampler from reflexively locking onto the
+  highest-probability token when two candidates are close — a known quality
+  boost for thinking models. The mild presence penalty guards against the
+  repetition loops thinking models are prone to; set it to 0.0 for maximum
+  code fidelity. Don't lower the temperature much — near-greedy decoding makes
+  reasoning models loop.
 - **Repetition loops?** Stick to the neutral sampling defaults first. In our
   testing, enabling the DRY sampler (`--dry-multiplier 0.8`) made this model
   hallucinate — thinking models legitimately repeat phrases while reasoning,
@@ -149,6 +168,28 @@ Notes:
   `:v1` (PrismML fork, `QK2_0 = 128`).
 - Measured: ~42 tok/s generation on an RTX 4080 Laptop GPU with v3
   (v2: ~39 tok/s, v1/g128: ~44 tok/s).
+
+## Parallelism expectations (one 12 GB GPU)
+
+Bonsai is served by a single GPU, so parallelism is about *overlapping*
+requests, not multiplying throughput:
+
+- **Decode (~40 tok/s) is shared.** Three concurrent subagents each generating
+  3K tokens finish no faster than ~3×3K/40 ≈ 225 s of aggregate decode time;
+  more slots never makes the sum of output tokens faster.
+- **Prefill is the part slots fix.** A subagent prompt of 30K tokens takes
+  ~30–60 s to prefill (the new upstream Q2_0 CUDA kernels are prefill-bound at
+  ~0.9–1K tok/s). With one slot, that blocks everything; with three, one
+  request prefills while another decodes, and short requests overlap fully
+  (measured: 3 concurrent short requests finished in 6.8 s wall vs ~15 s
+  serial).
+- **Requests beyond the slot count queue** (llama-server returns no error;
+  they wait for a free slot). pi fan-out of more than 3 concurrent subagents
+  therefore completes in waves.
+- **KV pool contention**: with all 3 slots active, the shared 180K pool
+  divides ~60K per slot; typical subagent contexts fit easily. If you
+  regularly need more, drop to `-np 2` to reclaim the 5K back to `-c 185000`
+  (or run q8_0 KV at ~110K for better attention fidelity).
 
 ## Using with the pi agent
 
@@ -168,7 +209,7 @@ custom provider in `~/.pi/agent/models.json`:
           "name": "Ternary Bonsai 27B (local)",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 185000,
+          "contextWindow": 180000,
           "maxTokens": 16384,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }
@@ -191,11 +232,79 @@ pi has no sampling settings of its own — the sampling defaults configured
 server-side in the compose file apply. Keep `contextWindow` in sync with the
 server's `-c` value.
 
+### Subagent parallelism and timeouts (pi-subagents extension)
+
+With the [pi-subagents](https://pi.dev/packages/pi-subagents) extension
+installed, the server's 3 slots line up with a `globalConcurrencyLimit` of 2
+so the parent session always keeps one slot free. This also caps top-level
+parallel fan-outs at 2 concurrent subagents (they complete in waves; see
+[Parallelism expectations](#parallelism-expectations-one-12-gb-gpu)).
+
+`~/.pi/agent/extensions/subagent/config.json`:
+
+```json
+{
+	"globalConcurrencyLimit": 2,
+	"parallel": { "concurrency": 2 }
+}
+```
+
+The builtin agents' default 30-minute run timeout can be too tight for Bonsai
+on a 12 GB GPU (slow prefill + ~40 tok/s decode). Eject them to user scope
+and add `timeoutMs` to the frontmatter (60 min here):
+
+```bash
+# for each agent you use: worker, reviewer, researcher, oracle, scout, ...
+pi subagents eject worker          # creates ~/.pi/agent/agents/worker.md
+# add to the frontmatter:
+#   timeoutMs: 3600000
+```
+
+Or override per run with `timeoutMs` / `maxRuntimeMs` on the `subagent`
+tool call (a per-call value always wins over the agent default).
+
 > **Testing note:** this setup is primarily tested with the pi agent using the
 > [pi-effort](https://pi.dev/packages/pi-effort) extension
 > (`pi install npm:pi-effort`) with the reasoning effort set to `medium`
 > (`/effort medium`). Other effort levels and clients should work but see less
 > coverage.
+
+## pi agent configuration examples
+
+The [`examples/pi/`](examples/pi/) directory mirrors the config used and
+tested with this repo — copy them into `~/.pi/agent/` as needed:
+
+| Example file | Destination | Purpose |
+|---|---|---|
+| `examples/pi/models.json.example` | `~/.pi/agent/models.json` | bonsai-local provider only (`apiKey: "none"`) |
+| `examples/pi/models.cloud.example` | — | bonsai-local **plus** a cloud provider with a `\<YOUR_API_KEY\>` placeholder; **never commit real keys** |
+| `examples/pi/settings.json.example` | `~/.pi/agent/settings.json` | defaults (`bonsai-27b`, thinking `medium`) + the extension packages |
+| `examples/pi/subagent-config.json` | `~/.pi/agent/extensions/subagent/config.json` | pi-subagents concurrency caps: 2 subagents max, 2 parallel |
+| `examples/pi/agents/worker.md.example` | `~/.pi/agent/agents/worker.md` | ejected `worker` with `timeoutMs: 3600000` (60 min) in the frontmatter |
+
+**Required extension:** the subagent config only takes effect with
+[pi-subagents](https://pi.dev/packages/pi-subagents) installed:
+
+```bash
+pi install npm:pi-subagents
+```
+
+Optional but used in this setup: `npm:pi-effort` (reasoning effort control),
+`npm:pi-memory` (memory files).
+
+Apply with e.g.:
+
+```bash
+cp examples/pi/models.json.example ~/.pi/agent/models.json
+cp examples/pi/subagent-config.json ~/.pi/agent/extensions/subagent/config.json
+mkdir -p ~/.pi/agent/agents
+cp examples/pi/agents/worker.md.example ~/.pi/agent/agents/worker.md
+```
+
+> **Security:** the examples contain no secrets. Your real `~/.pi/agent/`
+> files may hold API keys (`auth.json`, `models.json` with cloud providers) —
+> never copy or commit those. Treat `.pi-subagents/` (subagent transcripts)
+> as sensitive too; it is gitignored in this repo.
 
 ## Troubleshooting: slow inference, all CPU cores at 100 %
 
@@ -224,9 +333,12 @@ To diagnose, check `docker logs` — the compose file already runs with
 (`CUDA0 model buffer size` vs `CPU model buffer size`, `offloaded X/Y layers
 to GPU`) and the CUDA device table (`ggml_cuda_init: found N CUDA devices`).
 
-Context sizing with flash attention (on by default) and q4_0 KV cache:
-`-c 185000` with `--no-mmproj` fits 12 GB; on 16 GB the full `-c 262144`
-fits (~14 GiB). If it OOMs, step `-c` down — the loud failure marks your
+Context sizing with flash attention (on by default): `-c 180000` with q4_0 KV,
+`-np 3` and `--no-mmproj` uses ~11.8 GiB of the 12 GB card (~0.5 GiB
+headroom). Measured limits on this card: q4_0 KV maxes at ~185K with 2 slots
+or ~180K with 3 slots; q8_0 KV maxes at ~110K; the compute buffers grow with
+context, so the cliff is steep. On 16 GB, q4_0 KV fits the full `-c 262144`,
+q8_0 fits ~200K. If it OOMs, step `-c` down — the loud failure marks your
 card's real maximum.
 
 ## Building
