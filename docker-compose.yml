@@ -7,19 +7,16 @@ services:
       - "8080:8080"
     volumes:
       - ./models:/models:ro
-    # llama-server args: Modell (g64-Packing, passend zu v3 aus offiziellem
-    # upstream master), Alias für die OpenAI-API, alle Layer
-    # auf GPU, 150K Kontext mit Flash Attention + 4-Bit-KV-Cache (g64-Datei
-    # ist 0,42 GB größer als g128 — 180K passt nicht mehr in 12 GB VRAM),
-    # Sampling-Defaults serverseitig gesetzt (pi kennt keine Sampling-Settings)
     command: >
       -m /models/Ternary-Bonsai-27B-Q2_g64.gguf
       -a bonsai-27b
       --host 0.0.0.0
       --port 8080
       -ngl 99
-      -c 153600
-      -fa on
+      -np 2
+      -c 185000
+      --kv-unified
+      --no-mmproj
       --cache-type-k q4_0
       --cache-type-v q4_0
       --temp 0.6
@@ -28,6 +25,8 @@ services:
       --min-p 0.0
       --presence-penalty 0.3
       --repeat-penalty 1.0
+      --cache-ram 4096
+      -lv 3
     deploy:
       resources:
         reservations:

@@ -83,8 +83,10 @@ services:
       --host 0.0.0.0
       --port 8080
       -ngl 99
-      -c 153600
-      -fa on
+      -np 2
+      -c 185000
+      --kv-unified
+      --no-mmproj
       --cache-type-k q4_0
       --cache-type-v q4_0
       --temp 0.6
@@ -93,6 +95,8 @@ services:
       --min-p 0.0
       --presence-penalty 0.3
       --repeat-penalty 1.0
+      --cache-ram 4096
+      -lv 3
     deploy:
       resources:
         reservations:
@@ -104,10 +108,31 @@ services:
 
 Notes:
 
-- **Context 153600 (150K)** with flash attention and 4-bit KV cache. The model
-  supports 262K, but the g64 file is 0.42 GB larger than the old g128 one, so
-  150K is the practical limit on 12 GB (measured: ~11.3 of 12.3 GiB). Reduce
-  `-c` if you hit OOM, or raise it on bigger GPUs.
+- **Context 185000 (~180K)** with 4-bit KV cache and the vision projector
+  disabled (`--no-mmproj`). The model supports 262K, but 185000 is the
+  practical limit on 12 GB. Reduce `-c` if you hit OOM, or raise it on bigger
+  GPUs.
+- **`--no-mmproj`** keeps the vision projector
+  (`Ternary-Bonsai-27B-mmproj-*.gguf`) from auto-loading onto the GPU, which
+  frees ~1+ GB of VRAM for context. If you want image input, remove
+  `--no-mmproj` (llama-server then auto-discovers the mmproj file next to the
+  model, or point at it explicitly with `--mmproj`) **and reduce `-c`** (back
+  toward ~150K on 12 GB) to make room for the projector.
+- **`-np 2` + `--kv-unified`**: two parallel server slots on one unified
+  KV-cache pool. Without `--kv-unified`, each slot would get a fixed half of
+  `-c` (92500 tokens); with the unified cache, a single request can still use
+  the full 185000-token context while the second slot stays available for a
+  concurrent request.
+- **No `-fa on`**: flash attention defaults to `auto` in current llama.cpp,
+  which already enables it wherever it is supported — setting `-fa on` is
+  redundant and force-enables it even in combinations (changed KV-cache quant
+  types, other hardware) where auto would fall back, which can cause issues.
+  Leave it at the default.
+- **`-lv 3`** raises the log verbosity so `docker logs` shows the detail
+  needed to verify the setup — buffer placement, offloaded layer count, CUDA
+  device table (see
+  [Troubleshooting](#troubleshooting-slow-inference-all-cpu-cores-at-100-)).
+- **`--cache-ram 4096`** caps the host-RAM prompt cache at 4 GiB.
 - **Sampling defaults** are set server-side (`--temp 0.6 --top-p 0.95
   --top-k 20 --min-p 0.0 --presence-penalty 0.3 --repeat-penalty 1.0`); they
   apply to any request that doesn't send its own values. The mild presence
@@ -143,7 +168,7 @@ custom provider in `~/.pi/agent/models.json`:
           "name": "Ternary Bonsai 27B (local)",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 153600,
+          "contextWindow": 185000,
           "maxTokens": 8192,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }
@@ -189,18 +214,20 @@ middle ground. Two llama.cpp defaults cause this silently:
 - **mmproj auto-load**: if the vision projector
   (`Ternary-Bonsai-27B-mmproj-*.gguf`) sits next to the model file,
   llama-server auto-discovers it (`--mmproj-auto` defaults to on) and places
-  it on the GPU first, taking ~1+ GB of VRAM before the text weights. Move it
-  out of the models directory or pass `--no-mmproj` unless you want image
-  input (then budget ~1+ GB of context headroom for it).
+  it on the GPU first, taking ~1+ GB of VRAM before the text weights. The
+  compose file guards against this with `--no-mmproj`; remove that flag only
+  if you want image input, and reduce `-c` to give the projector its ~1+ GB
+  back.
 
-To diagnose, append `-v` to the `command:` arguments and check `docker logs`
-for where the buffers land (`CUDA0 model buffer size` vs `CPU model buffer
-size`, `offloaded X/Y layers to GPU`) and for the CUDA device table
-(`ggml_cuda_init: found N CUDA devices`).
+To diagnose, check `docker logs` — the compose file already runs with
+`-lv 3` (verbose logging), so the log shows where the buffers land
+(`CUDA0 model buffer size` vs `CPU model buffer size`, `offloaded X/Y layers
+to GPU`) and the CUDA device table (`ggml_cuda_init: found N CUDA devices`).
 
-Context sizing with `-fa on` and q4_0 KV cache: `-c 153600` fits 12 GB
-(~11.3 GiB used); on 16 GB the full `-c 262144` fits (~14 GiB). If it OOMs,
-step `-c` down — the loud failure marks your card's real maximum.
+Context sizing with flash attention (on by default) and q4_0 KV cache:
+`-c 185000` with `--no-mmproj` fits 12 GB; on 16 GB the full `-c 262144`
+fits (~14 GiB). If it OOMs, step `-c` down — the loud failure marks your
+card's real maximum.
 
 ## Building
 
