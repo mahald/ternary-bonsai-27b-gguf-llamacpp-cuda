@@ -4,20 +4,28 @@ Docker image and compose setup for serving
 [prism-ml/Ternary-Bonsai-27B-gguf](https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf)
 with CUDA and an OpenAI-compatible API.
 
-The current image (`:v3` / `:latest`) builds **plain official llama.cpp
-master** — the CUDA Q2_0 backend
-([PR #25707](https://github.com/ggml-org/llama.cpp/pull/25707)) was merged
-upstream on 2026-07-30, so all Q2_0 backends (CPU, Metal, Vulkan, CUDA) are
-now upstream and no patches are carried anymore.
+> **`:v4` is experimental.** It no longer builds official llama.cpp but
+> [buun-llama-cpp](https://github.com/spiritbuun/buun-llama-cpp), a research
+> fork whose own README opens with *"this is a highly experimental fork of
+> llama.cpp, use at your own discretion"*. What it buys is the reason for the
+> switch: **the model's full 262144-token context now fits on a 12 GB card**,
+> which it never did with upstream KV quantization. If you want the
+> conservative setup, stay on `:v3` — it is unchanged and still works.
+
+The switch is only about the KV cache. The fork carries the same upstream
+CUDA Q2_0 backend
+([PR #25707](https://github.com/ggml-org/llama.cpp/pull/25707), merged
+2026-07-30), so **the model file is unchanged from `:v3`**.
 
 Pick the model file that matches the image tag — the two Q2_0 packings are
 **incompatible**:
 
-| Image tag | llama.cpp source | Model file |
-|---|---|---|
-| `:v3`, `:latest` | official master (CUDA Q2_0 merged; g64, `QK2_0=64`) | `Ternary-Bonsai-27B-Q2_g64.gguf` |
-| `:v2` | official master + then-open PR #25707 (g64, `QK2_0=64`) | `Ternary-Bonsai-27B-Q2_g64.gguf` |
-| `:v1` | [PrismML fork](https://github.com/PrismML-Eng/llama.cpp) (g128, `QK2_0=128`) | `Ternary-Bonsai-27B-Q2_0.gguf` |
+| Image tag | llama.cpp source | KV cache | Max context on 12 GB | Model file |
+|---|---|---|---|---|
+| `:v4`, `:latest` | [buun-llama-cpp](https://github.com/spiritbuun/buun-llama-cpp) (fork; Q2_0 g64) | **VBR** (f16 → turbo1_tcq) | **262144** | `Ternary-Bonsai-27B-Q2_g64.gguf` |
+| `:v3` | official master (CUDA Q2_0 merged; g64, `QK2_0=64`) | q4_0, fixed | 180000 | `Ternary-Bonsai-27B-Q2_g64.gguf` |
+| `:v2` | official master + then-open PR #25707 (g64, `QK2_0=64`) | q4_0, fixed | 180000 | `Ternary-Bonsai-27B-Q2_g64.gguf` |
+| `:v1` | [PrismML fork](https://github.com/PrismML-Eng/llama.cpp) (g128, `QK2_0=128`) | q4_0, fixed | 180000 | `Ternary-Bonsai-27B-Q2_0.gguf` |
 
 - Image: `mhald/ternary-bonsai-27b-gguf-llamacpp-cuda` (see [Links](#links))
 - Endpoint: `http://127.0.0.1:8080/v1` (`/v1/chat/completions`, `/v1/models`, …), no API key
@@ -70,7 +78,7 @@ The [`docker-compose.yml`](docker-compose.yml) in this repo, tuned for a
 ```yaml
 services:
   bonsai:
-    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v3
+    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v4
     container_name: bonsai-27b
     restart: unless-stopped
     ports:
@@ -84,11 +92,10 @@ services:
       --port 8080
       -ngl 99
       -np 3
-      -c 180000
+      -c 262144
+      -ct vbr
       --kv-unified
       --no-mmproj
-      --cache-type-k q4_0
-      --cache-type-v q4_0
       --temp 0.7
       --top-p 0.95
       --top-k 20
@@ -110,37 +117,35 @@ services:
 
 Notes:
 
-- **Context 180000 (~180K)** with **q4_0 KV cache** and the vision projector
-  disabled (`--no-mmproj`). The model supports 262K; 180000 is the practical
-  limit on 12 GB when also running 3 parallel slots (185K is the max with 2
-  slots; the CUDA compute buffers grow with context, so 185K + `-np 3`
-  OOMs). Reduce `-c` if you hit OOM, or raise it on bigger GPUs.
-- **KV cache at q4_0 for context, not q8_0**: on a 12 GB card you have to
-  choose — q8_0 KV buys better attention fidelity (the model card measured its
-  headline benchmarks with an FP16 cache) but only ~110K of context; q4_0
-  doubles that to ~180K at a small long-range-coherence cost. This repo
-  defaults to q4_0 because for long agentic sessions context is the scarcer
-  resource. On a 16 GB card, q4_0 KV fits the full `-c 262144`, q8_0 fits
-  ~200K.
+- **Context 262144** — the model's full training length, with the vision
+  projector disabled (`--no-mmproj`). This is what `:v4` is for; see
+  [VBR](#vbr--the-reason-for-v4) below. Reduce `-c` if you hit OOM.
+- **`-ct vbr` instead of fixed `--cache-type-k/-v`**: the KV cache is no
+  longer one quantization for the whole session. It starts at **f16** and
+  degrades one (layer, side) tensor at a time, cheapest-first, only when VRAM
+  pressure demands it. A shallow session therefore runs at full FP16 fidelity
+  — strictly better than `:v3`, which paid q4_0 from the first token — and a
+  262144-token session ends up in a turbo3_tcq / turbo2_tcq mixture instead of
+  not fitting at all.
 - **`--no-mmproj`** keeps the vision projector
   (`Ternary-Bonsai-27B-mmproj-*.gguf`) from auto-loading onto the GPU, which
   frees ~1+ GB of VRAM for context. If you want image input, remove
   `--no-mmproj` (llama-server then auto-discovers the mmproj file next to the
-  model, or point at it explicitly with `--mmproj`) **and reduce `-c`** (back
-  toward ~150K on 12 GB) to make room for the projector.
+  model, or point at it explicitly with `--mmproj`). Under VBR you do not
+  strictly have to reduce `-c` for it — the projector simply shrinks the
+  auto-derived KV budget, so the cache degrades earlier — but it costs
+  quality at depth. The fork also offers `--mmproj-gpu-swap` as an
+  alternative; untested with this model.
 - **`-np 3` + `--kv-unified`**: three parallel server slots on one unified
   KV-cache pool. Without `--kv-unified`, each slot would get a fixed third of
-  `-c` (60000 tokens); with the unified cache, a single request can still use
-  the full 180000-token context while the other slots stay available for
-  concurrent requests (e.g. parallel pi subagents). This is the most slots
-  that fit 12 GB — each slot needs its own compute buffers, and `-np 4`
-  OOMs (`CUDA error: out of memory` at startup).
-
-- **No `-fa on`**: flash attention defaults to `auto` in current llama.cpp,
-  which already enables it wherever it is supported — setting `-fa on` is
-  redundant and force-enables it even in combinations (changed KV-cache quant
-  types, other hardware) where auto would fall back, which can cause issues.
-  Leave it at the default.
+  `-c` (87381 tokens); with the unified cache, a single request can still use
+  the full 262144-token context while the other slots stay available for
+  concurrent requests (e.g. parallel pi subagents). Dynamic VBR forces
+  `--kv-unified` anyway as soon as `-np > 1`; it is spelled out here so the
+  config still reads correctly if you ever drop `-ct vbr`.
+- **No `-fa on`**: flash attention defaults to `auto`, which already enables
+  it wherever it is supported. With turbo-typed KV the fork force-enables it
+  regardless, so the flag would be redundant twice over.
 - **`-lv 3`** raises the log verbosity so `docker logs` shows the detail
   needed to verify the setup — buffer placement, offloaded layer count, CUDA
   device table (see
@@ -166,17 +171,122 @@ Notes:
 - Use `Ternary-Bonsai-27B-Q2_g64.gguf` with `:v2` and newer. The old
   `Q2_0.gguf` (g128) does **not** load with these images — it only works with
   `:v1` (PrismML fork, `QK2_0 = 128`).
-- Measured: ~42 tok/s generation on an RTX 4080 Laptop GPU with v3
-  (v2: ~39 tok/s, v1/g128: ~44 tok/s).
+- Measured on an RTX 4080 Laptop GPU: **~45 tok/s** generation with v4
+  (v3: ~42, v2: ~39, v1/g128: ~44).
+
+## VBR — the reason for v4
+
+### Why the KV cache is the whole problem
+
+Bonsai reports itself as architecture `qwen35`: 64 blocks, but
+`full_attention_interval = 4`, and the other three out of every four layers
+are SSM (recurrent) layers. So **only 16 layers hold a KV cache** — the
+recurrent state is a constant 449 MiB no matter how long the context gets.
+
+Those 16 layers have 4 KV heads with a key/value length of 256, i.e.
+16 × 2 × 4 × 256 = **32768 values per token**. Multiply by 262144 tokens and
+you get exactly 8 Gi values, which makes the arithmetic unusually clean:
+
+> **KV cache size in GiB at the full 262144-token context = the codec's
+> bits-per-value.**
+
+| KV codec | bpv | KV @ 262144 | + 7.06 GiB weights | fits 12 GB? |
+|---|---|---|---|---|
+| f16 | 16.0 | 16.00 GiB | 23.1 GiB | no |
+| q8_0 | 8.5 | 8.50 GiB | 15.6 GiB | no |
+| q4_0 (`:v3`) | 4.5 | 4.50 GiB | 11.6 GiB | no (+ ~0.8 GiB buffers) |
+| turbo4 | 4.125 | 4.13 GiB | 11.2 GiB | no |
+| turbo3_tcq | 3.25 | 3.25 GiB | 10.3 GiB | tight |
+| turbo2_tcq | 2.25 | 2.25 GiB | 9.3 GiB | yes |
+| turbo1_tcq | 1.25 | 1.25 GiB | 8.3 GiB | yes |
+
+That is why `:v3` stopped at 180000 tokens, and why a fixed low-bit codec is
+not the answer either: you would pay 2-bit quality for the whole session just
+to survive a depth you usually never reach.
+
+### What VBR actually does
+
+VBR (variable bit-rate) allocates the cache in a CUDA VMM pool: it reserves
+the full f16-sized virtual address range (16388 MiB here) but maps physical
+pages only as the context grows, against a VRAM budget it derives from
+whatever is left after weights and compute buffers. The cache **starts at
+f16** and, when the budget is about to be exceeded, degrades one
+(layer, side) tensor at a time — transcoding on a side stream, cheapest unit
+first, following a price order measured per architecture. For `qwen35` the
+fork ships a baked order of **160 steps** (16 KV layers × 2 sides × 5 tiers),
+which the server confirms on startup:
+
+```
+vbr_load_degrade_order: VBR degrade order: 160 baked steps (arch-matched, matrix v3)
+operator(): VBR dynamic: KV VRAM budget 2853 MiB (auto, from remaining memory)
+```
+
+Explicit `-ct vbr` opens the full ladder down to `turbo1_tcq`; without it,
+VBR is still on but stops at a `turbo4` floor. Explicit `-c` bypasses the
+capacity estimator, which is what makes "just give me the model's full
+context" work.
+
+### Measured (RTX 4080 Laptop, 12 GB)
+
+Single 249630-token prompt at `-c 262144 -ct vbr -np 3 --kv-unified`. The
+ranges below span two separate builds of the same fork commit — one against
+CUDA 12.8.1, one against 13.3.1 — because the CUDA major version turned out to
+make no measurable difference. The image ships 13.3.1.
+
+| | |
+|---|---|
+| VRAM after startup | 8047–8111 MiB (weights 6882, SSM state 449, compute 379) |
+| VRAM at 249 k tokens | **11709 / 12282 MiB** — no OOM |
+| Prefill | 864–876 s for 249630 tokens, avg **285–289 t/s** |
+| Generation, shallow | **43.6–45.5 t/s** |
+| Generation at 249 k depth | 18.1 t/s |
+| Degrade steps fired | **112–114 of 160** |
+| Final cache mixture | mostly turbo3_tcq / turbo2_tcq, a few units at turbo1_tcq |
+
+Prefill is the cost you actually feel: it starts around 840 t/s and falls to
+~145 t/s past 200 k tokens, so filling the window once takes ~15 minutes.
+Depth is cheap to *hold*, not cheap to *reach*.
+
+The first degrade fires at ~43000 tokens (where f16 exhausts the 2853 MiB
+budget), and it starts at layer 63 — the last full-attention layer, i.e. the
+one the price order rates least sensitive. Everything below that depth runs
+on an untouched f16 cache.
+
+Useful knobs:
+
+- `--vbr-vram 3G` — override the auto-derived KV budget (auto leaves ~1.3 GiB
+  headroom on this card; raising it trades safety margin for cache quality).
+- `--vbr-floor t3` — refuse to degrade below a tier. Careful: with a floor
+  above ~t2 the full 262144 window no longer fits on 12 GB.
+- Run with `-v` (or the compose file's `-lv 3`) to watch `VBR degrade #…` in
+  `docker logs`.
+
+### What VBR costs you
+
+Dynamic VBR is not free of trade-offs, and they are worth knowing before you
+switch off `:v3`:
+
+- **Context shift / self-extend and slot save-restore are disabled.** A tier
+  flip would invalidate any snapshot taken before it, so the fork turns those
+  off in dynamic mode (context checkpoints stay enabled on hybrid models such
+  as this one). Generation stops cleanly when the context fills instead of
+  sliding the window.
+- **Flash attention is force-enabled**, so a backend that cannot do FA is not
+  an option.
+- **KV that lands on the CPU falls back to q8_0** — irrelevant here, since
+  the compose file pins `-ngl 99`, but it means VBR is a GPU-only feature.
+- **It is an experimental fork.** No upstream release process, no CI matrix of
+  the size llama.cpp has.
 
 ## Parallelism expectations (one 12 GB GPU)
 
 Bonsai is served by a single GPU, so parallelism is about *overlapping*
 requests, not multiplying throughput:
 
-- **Decode (~40 tok/s) is shared.** Three concurrent subagents each generating
-  3K tokens finish no faster than ~3×3K/40 ≈ 225 s of aggregate decode time;
-  more slots never makes the sum of output tokens faster.
+- **Decode (~45 tok/s) is shared.** Three concurrent subagents each generating
+  3K tokens finish no faster than ~3×3K/45 ≈ 200 s of aggregate decode time;
+  more slots never makes the sum of output tokens faster. Decode also slows
+  with depth (~18 tok/s at 249 k tokens), independently of how many slots run.
 - **Prefill is the part slots fix.** A subagent prompt of 30K tokens takes
   ~30–60 s to prefill (the new upstream Q2_0 CUDA kernels are prefill-bound at
   ~0.9–1K tok/s). With one slot, that blocks everything; with three, one
@@ -186,10 +296,11 @@ requests, not multiplying throughput:
 - **Requests beyond the slot count queue** (llama-server returns no error;
   they wait for a free slot). pi fan-out of more than 3 concurrent subagents
   therefore completes in waves.
-- **KV pool contention**: with all 3 slots active, the shared 180K pool
-  divides ~60K per slot; typical subagent contexts fit easily. If you
-  regularly need more, drop to `-np 2` to reclaim the 5K back to `-c 185000`
-  (or run q8_0 KV at ~110K for better attention fidelity).
+- **KV pool contention**: with all 3 slots active, the shared 262K pool
+  divides ~87K per slot; typical subagent contexts fit easily. Note that under
+  VBR the slots also share the *quality* budget — three deep sessions push the
+  cache down the tier ladder faster than one does, because the degrade
+  controller sees the pool's total mapped bytes, not any single slot's.
 
 ## Using with the pi agent
 
@@ -209,7 +320,7 @@ custom provider in `~/.pi/agent/models.json`:
           "name": "Ternary Bonsai 27B (local)",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 180000,
+          "contextWindow": 262144,
           "maxTokens": 16384,
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
         }
@@ -250,7 +361,7 @@ parallel fan-outs at 2 concurrent subagents (they complete in waves; see
 ```
 
 The builtin agents' default 30-minute run timeout can be too tight for Bonsai
-on a 12 GB GPU (slow prefill + ~40 tok/s decode). Eject them to user scope
+on a 12 GB GPU (slow prefill + ~45 tok/s decode). Eject them to user scope
 and add `timeoutMs` to the frontmatter (60 min here):
 
 ```bash
@@ -333,42 +444,85 @@ To diagnose, check `docker logs` — the compose file already runs with
 (`CUDA0 model buffer size` vs `CPU model buffer size`, `offloaded X/Y layers
 to GPU`) and the CUDA device table (`ggml_cuda_init: found N CUDA devices`).
 
-Context sizing with flash attention (on by default): `-c 180000` with q4_0 KV,
-`-np 3` and `--no-mmproj` uses ~11.8 GiB of the 12 GB card (~0.5 GiB
-headroom). Measured limits on this card: q4_0 KV maxes at ~185K with 2 slots
-or ~180K with 3 slots; q8_0 KV maxes at ~110K; the compute buffers grow with
-context, so the cliff is steep. On 16 GB, q4_0 KV fits the full `-c 262144`,
-q8_0 fits ~200K. If it OOMs, step `-c` down — the loud failure marks your
-card's real maximum.
+Context sizing under VBR (`:v4`) is no longer a cliff you have to find by
+bisection: `-c 262144 -ct vbr -np 3 --no-mmproj` starts at 8047 MiB and grows
+to 11709 MiB of the 12 GB card at full depth, because the cache trades
+quality for space instead of failing. The old fixed-codec limits still apply
+if you pin `--cache-type-k/-v` by hand — on this card q4_0 KV maxes at ~185K
+with 2 slots or ~180K with 3, and q8_0 KV at ~110K.
 
 ## Building
 
-Locally:
+### Native build (recommended for your own machine)
+
+```bash
+./build-native.sh              # -> bonsai-27b:native
+```
+
+[`Dockerfile.native`](Dockerfile.native) sets **both** knobs to native: the
+CPU backend compiles with `-march=native`, and CUDA compiles for exactly your
+GPU's compute capability instead of the full multi-arch set. That matters
+here: the fork has ~600 CUDA translation units (384 of them TurboQuant
+flash-attention instances), so a single-arch build finishes in well under an
+hour where a multi-arch build takes several.
+
+The wrapper script exists for one reason: with Docker's default `runc`
+runtime the build container has **no GPU**, so CMake cannot resolve
+`CMAKE_CUDA_ARCHITECTURES=native` on its own — it reports
+`CMAKE_CUDA_ARCHITECTURES_NATIVE=No CUDA devices found` and would silently
+build the wrong thing. `build-native.sh` reads the compute capability from
+the host driver and passes it in; the Dockerfile fails loudly if you bypass
+it. (If your daemon's *default* runtime is `nvidia`, plain
+`docker build -f Dockerfile.native .` works too.)
+
+Point the compose file at the resulting tag:
+
+```yaml
+image: bonsai-27b:native
+```
+
+### Portable / published build
 
 ```bash
 docker build -t mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:dev .
 ```
 
-The Dockerfile pins `LLAMACPP_REF` to an official llama.cpp master commit
-(since v3; the CUDA Q2_0 PR #25707 is merged upstream). To move to a newer
-llama.cpp, update `LLAMACPP_REF` to a newer master commit. By default the
-image compiles
-for a broad multi-arch CUDA set (ggml's default; Turing through
-Hopper/Blackwell), so the published images run on most NVIDIA GPUs. The
-container ships its own CUDA 12.8 runtime — the host only needs a reasonably
-recent NVIDIA driver. For a much faster local build, narrow the target to
-your GPU, e.g. `--build-arg CUDA_DOCKER_ARCH=89` (Ada / RTX 40xx).
+[`Dockerfile`](Dockerfile) is the multi-arch build behind the published
+images. Three things differ from `:v3`:
+
+- `LLAMACPP_REPO` now points at **buun-llama-cpp**, pinned via `LLAMACPP_REF`.
+  To go back to official llama.cpp, override both args.
+- `GGML_CUDA_FA_ALL_QUANTS=ON` is **required, not optional**. Without it the
+  CMake glob only compiles the scalar turbo flash-attention instances and
+  skips the TCQ ones — exactly the tiers VBR degrades into.
+- `-DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined` is required because
+  the VBR VMM pool calls the CUDA driver API (`cuMemAddressFree` and friends);
+  `libcuda.so` only exists at runtime, so the link otherwise fails with
+  `undefined reference`.
+
+The container ships its own **CUDA 13.3.1** runtime — the host needs a driver
+from the 13.x series. Note that CUDA 13 dropped Maxwell, Pascal and Volta, so
+the multi-arch default set now starts at Turing (7.5), unlike the CUDA 12
+based `:v3` image.
 
 CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
-repo secrets).
+repo secrets). Since v4 the workflow pins
+`CUDA_DOCKER_ARCH=86-real;89-real;120-real` (Ampere / Ada / Blackwell
+consumer): the fork's ~600 CUDA translation units multiplied by ggml's full
+default architecture set does not finish inside a GitHub runner's 6-hour job
+limit. Widen the list in
+[`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml) if
+you need Turing or datacenter parts, and expect the build time to scale with
+it.
 
 ## DSpark drafter — not recommended
 
 The HF repo also ships a DSpark speculative-decoding drafter
 (`Ternary-Bonsai-27B-dspark-Q4_1.gguf`). It only loads with `:v1`: the file
 uses the PrismML fork's own format (GGUF architecture `dspark`, g128
-embedding), which official llama.cpp — and therefore `:v2`/`:v3` — rejects
+embedding), which official llama.cpp — and therefore `:v2`/`:v3`, as well as
+the buun fork behind `:v4` — rejects
 (upstream's DSpark implementation only supports DeepSeek-style `dflash`
 drafters).
 
@@ -389,9 +543,11 @@ Setup files: MIT. llama.cpp is MIT, the Bonsai model is Apache 2.0
 
 - **Docker Hub (built images):**
   [mhald/ternary-bonsai-27b-gguf-llamacpp-cuda](https://hub.docker.com/r/mhald/ternary-bonsai-27b-gguf-llamacpp-cuda)
-  — `:latest` (tracks `main`) · `:v3` (official master, g64) · `:v2` (master + PR #25707, g64) · `:v1` (PrismML fork, g128)
+  — `:latest` (tracks `main`) · `:v4` (buun fork, VBR, g64) · `:v3` (official master, g64) · `:v2` (master + PR #25707, g64) · `:v1` (PrismML fork, g128)
 - **This repo:** https://github.com/mahald/ternary-bonsai-27b-gguf-llamacpp-cuda
 - **Model:** https://huggingface.co/prism-ml/Ternary-Bonsai-27B-gguf
+- **llama.cpp fork used by `:v4` (TurboQuant / VBR):** https://github.com/spiritbuun/buun-llama-cpp
+- **TCQ paper (trellis-coded KV cache):** https://huggingface.co/datasets/spiritbuun/turboquant-tcq-kv-cache
 - **CUDA Q2_0 PR (merged upstream, in `:v2` and newer):** https://github.com/ggml-org/llama.cpp/pull/25707
 - **llama.cpp fork (g128 kernels, in `:v1`):** https://github.com/PrismML-Eng/llama.cpp
 - **Whitepaper & demos:** https://github.com/PrismML-Eng/Bonsai-demo

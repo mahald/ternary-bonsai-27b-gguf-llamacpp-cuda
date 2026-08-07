@@ -41,6 +41,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Since v4 the image builds the buun fork: ~600 CUDA translation
+          # units instead of ~200, because every TurboQuant tier ships its own
+          # flash-attention instances. ggml's "default" multi-arch set would
+          # multiply that past this runner's 6 h job limit (a single-arch build
+          # already takes ~50 min on 6 fast cores). So publish for the consumer
+          # generations this setup actually targets — Ampere, Ada, Blackwell.
+          # Widen the list if you need Turing (75) or datacenter parts (80, 90,
+          # 100); expect the build time to scale with it.
+          build-args: |
+            CUDA_DOCKER_ARCH=86-real;89-real;120-real
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -55,4 +65,4 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda
-          short-description: "Ternary Bonsai 27B GGUF on official llama.cpp master (CUDA Q2_0 upstream), OpenAI-compatible API"
+          short-description: "Ternary Bonsai 27B GGUF on buun-llama-cpp (CUDA Q2_0 + VBR KV cache), full 262K context, OpenAI-compatible API"

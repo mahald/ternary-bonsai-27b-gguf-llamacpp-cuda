@@ -1,0 +1,10 @@
+# The Dockerfiles clone llama.cpp themselves and COPY nothing from the build
+# context, so BuildKit skips the context transfer entirely today. This file is
+# the guard for the day someone adds a COPY: models/ holds multi-GB GGUFs and
+# llama.cpp/ a full source tree, and neither belongs in a build context.
+models/
+llama.cpp/
+*.gguf
+.git/
+.github/
+.pi-subagents/

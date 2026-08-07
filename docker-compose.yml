@@ -1,6 +1,6 @@
 services:
   bonsai:
-    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v3
+    image: mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:v4
     container_name: bonsai-27b
     restart: unless-stopped
     ports:
@@ -14,11 +14,10 @@ services:
       --port 8080
       -ngl 99
       -np 3
-      -c 180000
+      -c 262144
+      -ct vbr
       --kv-unified
       --no-mmproj
-      --cache-type-k q4_0
-      --cache-type-v q4_0
       --temp 0.7
       --top-p 0.95
       --top-k 20
