@@ -507,14 +507,13 @@ based `:v3` image.
 
 CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
-repo secrets). Since v4 the workflow pins
-`CUDA_DOCKER_ARCH=86-real;89-real;120-real` (Ampere / Ada / Blackwell
-consumer): the fork's ~600 CUDA translation units multiplied by ggml's full
-default architecture set does not finish inside a GitHub runner's 6-hour job
-limit. Widen the list in
-[`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml) if
-you need Turing or datacenter parts, and expect the build time to scale with
-it.
+repo secrets). The workflow deliberately does **not** pin
+`CUDA_DOCKER_ARCH` — ggml's default set combines real (SASS) targets for the
+common GPUs with virtual (PTX) ones for the rest, so architectures without
+device code still JIT on first run; a hand-pinned list of `*-real` targets
+would publish an image that refuses to start on anything else. With the
+fork's ~600 translation units the job takes several hours (v3 took ~1h15m),
+which still fits a GitHub runner's 6-hour limit.
 
 ## DSpark drafter — not recommended
 
