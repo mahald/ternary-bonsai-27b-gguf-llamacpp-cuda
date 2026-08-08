@@ -534,6 +534,23 @@ cp examples/pi/agents/worker.md.example ~/.pi/agent/agents/worker.md
 
 ## Troubleshooting: slow inference, all CPU cores at 100 %
 
+> **Less of a trap on `:v4`.** VBR needs its KV tensors on a device that
+> implements the turbo codecs, so a configuration that would park the KV cache
+> on the CPU now fails at startup with a clear message instead of quietly
+> running slowly:
+>
+> ```
+> failed to initialize the context: dynamic VBR (-ctk vbr) requires per-device
+> KV buffers with turbo/VBR backend support, but the KV buffer type is CPU (or
+> a device underneath it) without that support — offload the KV cache to
+> supported GPUs or use a static KV type (f16/q8_0).
+> ```
+>
+> Worth knowing: VBR is active **even without `-ct vbr`** (implicitly, with a
+> turbo4 floor), so this applies to any `:v4` run that does not pin a static
+> cache type. If you deliberately want CPU or partial-CPU inference, pass
+> `-ctk f16 -ctv f16` — and then the silent-spill problem below is yours again.
+
 If the server starts cleanly, generates correct output, but runs ~10× slower
 than expected with every CPU core pegged — the model is (partly) running from
 system RAM. Bonsai is a **dense** model: whatever share doesn't compute in
