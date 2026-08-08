@@ -641,25 +641,41 @@ CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
 repo secrets).
 
-Since v4 the workflow pins `CUDA_DOCKER_ARCH=75-virtual;86-real;89-real`,
-and both halves of that matter:
+Since v4 the workflow pins
+`CUDA_DOCKER_ARCH=75-virtual;86-real;89-real;120-real`:
+
+| Entry | Covers |
+|---|---|
+| `75-virtual` | PTX floor — every GPU from Turing up can JIT |
+| `86-real` | Ampere consumer (RTX 30xx) |
+| `89-real` | Ada (RTX 40xx) — what this setup is tuned on |
+| `120-real` | Blackwell consumer (RTX 50xx) |
+
+Three things about that list are worth knowing before you change it:
 
 - **It has to be pinned.** With ggml's default set the job hits the runner's
   hard 6-hour limit and gets killed mid-build — measured, twice. The fork has
   ~600 CUDA translation units against v3's ~200, and the TurboQuant
   flash-attention templates are far more expensive than average, so v3's
-  ~1h15m does not extrapolate. The list above cuts ~6 codegen passes to 3.
+  ~1h15m does not extrapolate. One pass costs ~1h12m here (3 passes = 3h37m),
+  so four fit with about an hour to spare.
 - **It has to keep a virtual target.** PTX is forward-compatible, so the
   single `75-virtual` entry lets every GPU from Turing upwards JIT on first
   run. A list of only `*-real` targets would build faster still and publish an
   image that refuses to start on anything not explicitly compiled.
+- **An architecture missing from this list is untested, not merely slower.**
+  ggml selects kernel variants host-side through
+  `ggml_cuda_highest_compiled_arch()`, which for an uncompiled compute
+  capability returns the highest arch *below* it — 890 on a Blackwell card,
+  say. The only device code actually present there is the JIT from the Turing
+  PTX, so the host's choice and the available device code can disagree, and
+  `fattn-mma-f16.cuh` aborts through `NO_DEVICE_CODE` instead of degrading
+  gracefully.
 
-The cost of the cut: Blackwell, Hopper and A100 JIT from the Turing PTX rather
-than running native code — correct, but slower to start and blind to their
-newer instructions. Ada and Ampere consumer cards, which is what this setup
-targets, get native code. Adding `120-real` is a one-line change in
-[`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml)
-once a green run shows what one pass really costs.
+Datacenter parts are the gap: A100 (`80`) and Hopper (`90`) are not compiled
+in, because two more passes would exceed the time limit. If you run those,
+build the image yourself — `./build-native.sh` compiles for exactly the card
+it finds.
 
 ## DSpark drafter — not recommended
 

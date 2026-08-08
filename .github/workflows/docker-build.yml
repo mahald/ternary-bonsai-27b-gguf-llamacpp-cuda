@@ -48,22 +48,29 @@ jobs:
           # flash-attention templates are far more expensive than average, so
           # v3's 1h15m does not extrapolate.
           #
-          # The list below cuts the default's ~6 codegen passes to 3 while
-          # keeping full GPU coverage:
+          # A measured pass costs ~1h12m here (3 passes = 3h37m, run
+          # 31243802306), so four fit with roughly an hour to spare.
           #   75-virtual  PTX floor. PTX is forward-compatible, so ONE low
           #               virtual target lets every GPU from Turing up JIT on
           #               first run. Never drop this — a list of only *-real
           #               targets publishes an image that refuses to start on
           #               anything not explicitly compiled.
-          #   86-real     Ampere consumer (RTX 30xx), native code
-          #   89-real     Ada (RTX 40xx), native code — what this repo targets
+          #   86-real     Ampere consumer (RTX 30xx)
+          #   89-real     Ada (RTX 40xx) — what this repo targets
+          #   120-real    Blackwell consumer (RTX 50xx)
           #
-          # Blackwell, Hopper and A100 therefore JIT from the 75 PTX instead of
-          # running native code: correct, but slower to start and not using
-          # their newer instructions. Adding 120-real is a one-line change once
-          # a green run tells us what a single pass actually costs here.
+          # Why the *-real entries matter more than "it would just be slower":
+          # ggml picks kernel variants host-side via
+          # ggml_cuda_highest_compiled_arch(), which for an uncompiled cc
+          # returns the highest arch BELOW it — e.g. 890 on a Blackwell card.
+          # The only device code actually available there is the JIT from the
+          # 75 PTX, i.e. the Turing path. Host choice and device code can then
+          # disagree, and fattn-mma-f16.cuh aborts via NO_DEVICE_CODE rather
+          # than degrading. Treat any architecture not listed here as untested,
+          # not as "works, just slower" — that includes datacenter parts
+          # (80 = A100, 90 = Hopper), which do not fit the time budget.
           build-args: |
-            CUDA_DOCKER_ARCH=75-virtual;86-real;89-real
+            CUDA_DOCKER_ARCH=75-virtual;86-real;89-real;120-real
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
