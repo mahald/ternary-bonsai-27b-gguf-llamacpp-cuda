@@ -1,10 +1,11 @@
 {
   "defaultProvider": "bonsai-local",
   "defaultModel": "bonsai-27b",
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-subagents",
     "npm:pi-effort",
-    "npm:pi-memory"
+    "npm:pi-memory",
+    "npm:@isr4el-silv4/loop-guard"
   ]
 }

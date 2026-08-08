@@ -389,8 +389,12 @@ tool call (a per-call value always wins over the agent default).
 
 > **Testing note:** this setup is primarily tested with the pi agent using the
 > [pi-effort](https://pi.dev/packages/pi-effort) extension
-> (`pi install npm:pi-effort`) with the reasoning effort set to `medium`
-> (`/effort medium`). Other effort levels and clients should work but see less
+> (`pi install npm:pi-effort`) with the reasoning effort set to `high`
+> (`/effort high`). It used to run at `medium` — `high` became comfortable
+> once [loop-guard](#extensions-in-use) was in place, because longer reasoning
+> is exactly where a thinking model has more room to fall into a loop, and
+> that is now caught at the agent layer instead of being priced into the
+> effort setting. Other effort levels and clients should work but see less
 > coverage.
 
 ### Extensions in use
@@ -411,10 +415,13 @@ developed and tested on. Three of them matter for *this* model specifically:
   repeated reasoning lines. With it running you can drop the sampler penalty
   entirely — `--presence-penalty 0.0`, the value this README already suggests
   "for maximum code fidelity" — and let the agent layer handle loops. That is
-  what the development machine runs. Note this is a rationale, not a measured
-  result: no loop rate was benchmarked with and without it.
+  what the development machine runs. It also raised the usable reasoning
+  effort from `medium` to `high`: more thinking means more opportunity to
+  loop, and that cost no longer has to be paid by keeping the effort low.
+  Note this is a rationale, not a measured result: no loop rate was
+  benchmarked with and without it.
 - **[pi-effort](https://pi.dev/packages/pi-effort)** — reasoning effort
-  control; see the testing note above.
+  control; `high` here, see the testing note above.
 - **[pi-subagents](https://pi.dev/packages/pi-subagents)** — delegation and
   multi-agent workflows, capped at 2 concurrent to match the server's 3 slots
   (see [above](#subagent-parallelism-and-timeouts-pi-subagents-extension)).
@@ -435,7 +442,7 @@ tested with this repo — copy them into `~/.pi/agent/` as needed:
 |---|---|---|
 | `examples/pi/models.json.example` | `~/.pi/agent/models.json` | bonsai-local provider only (`apiKey: "none"`) |
 | `examples/pi/models.cloud.example` | — | bonsai-local **plus** a cloud provider with a `\<YOUR_API_KEY\>` placeholder; **never commit real keys** |
-| `examples/pi/settings.json.example` | `~/.pi/agent/settings.json` | defaults (`bonsai-27b`, thinking `medium`) + the extension packages |
+| `examples/pi/settings.json.example` | `~/.pi/agent/settings.json` | defaults (`bonsai-27b`, thinking `high`) + the extension packages |
 | `examples/pi/subagent-config.json` | `~/.pi/agent/extensions/subagent/config.json` | pi-subagents concurrency caps: 2 subagents max, 2 parallel |
 | `examples/pi/agents/worker.md.example` | `~/.pi/agent/agents/worker.md` | ejected `worker` with `timeoutMs: 3600000` (60 min) in the frontmatter |
 
@@ -447,7 +454,9 @@ pi install npm:pi-subagents
 ```
 
 Optional but used in this setup: `npm:pi-effort` (reasoning effort control),
-`npm:pi-memory` (memory files).
+`npm:pi-memory` (memory files), and `npm:@isr4el-silv4/loop-guard` — the last
+one is what makes `thinking: high` and `--presence-penalty 0.0` a sensible
+pairing; see [Extensions in use](#extensions-in-use).
 
 Apply with e.g.:
 
