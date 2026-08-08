@@ -41,17 +41,29 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # No CUDA_DOCKER_ARCH override on purpose. ggml's default set mixes
-          # real (SASS) targets for the common GPUs with virtual (PTX) ones for
-          # the rest, so any architecture without device code still JITs on
-          # first run. Pinning a list of *-real targets would publish an image
-          # that simply refuses to start on everything else.
+          # Measured, not guessed: with ggml's default architecture set this
+          # job hits the runner's hard 6 h limit and is killed mid-build (runs
+          # 31229574507 and 31229783962, both cancelled at 6h00m). The fork has
+          # ~600 CUDA translation units against v3's ~200, and the TurboQuant
+          # flash-attention templates are far more expensive than average, so
+          # v3's 1h15m does not extrapolate.
           #
-          # Since v4 this builds the buun fork, ~600 CUDA translation units
-          # instead of ~200 (every TurboQuant tier ships its own
-          # flash-attention instances), so expect the job to run several hours
-          # — v3 took ~1h15m. Still inside the 6 h job limit, and the gha cache
-          # below keeps repeat runs cheap.
+          # The list below cuts the default's ~6 codegen passes to 3 while
+          # keeping full GPU coverage:
+          #   75-virtual  PTX floor. PTX is forward-compatible, so ONE low
+          #               virtual target lets every GPU from Turing up JIT on
+          #               first run. Never drop this — a list of only *-real
+          #               targets publishes an image that refuses to start on
+          #               anything not explicitly compiled.
+          #   86-real     Ampere consumer (RTX 30xx), native code
+          #   89-real     Ada (RTX 40xx), native code — what this repo targets
+          #
+          # Blackwell, Hopper and A100 therefore JIT from the 75 PTX instead of
+          # running native code: correct, but slower to start and not using
+          # their newer instructions. Adding 120-real is a one-line change once
+          # a green run tells us what a single pass actually costs here.
+          build-args: |
+            CUDA_DOCKER_ARCH=75-virtual;86-real;89-real
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

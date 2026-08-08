@@ -622,13 +622,27 @@ based `:v3` image.
 
 CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
-repo secrets). The workflow deliberately does **not** pin
-`CUDA_DOCKER_ARCH` — ggml's default set combines real (SASS) targets for the
-common GPUs with virtual (PTX) ones for the rest, so architectures without
-device code still JIT on first run; a hand-pinned list of `*-real` targets
-would publish an image that refuses to start on anything else. With the
-fork's ~600 translation units the job takes several hours (v3 took ~1h15m),
-which still fits a GitHub runner's 6-hour limit.
+repo secrets).
+
+Since v4 the workflow pins `CUDA_DOCKER_ARCH=75-virtual;86-real;89-real`,
+and both halves of that matter:
+
+- **It has to be pinned.** With ggml's default set the job hits the runner's
+  hard 6-hour limit and gets killed mid-build — measured, twice. The fork has
+  ~600 CUDA translation units against v3's ~200, and the TurboQuant
+  flash-attention templates are far more expensive than average, so v3's
+  ~1h15m does not extrapolate. The list above cuts ~6 codegen passes to 3.
+- **It has to keep a virtual target.** PTX is forward-compatible, so the
+  single `75-virtual` entry lets every GPU from Turing upwards JIT on first
+  run. A list of only `*-real` targets would build faster still and publish an
+  image that refuses to start on anything not explicitly compiled.
+
+The cost of the cut: Blackwell, Hopper and A100 JIT from the Turing PTX rather
+than running native code — correct, but slower to start and blind to their
+newer instructions. Ada and Ampere consumer cards, which is what this setup
+targets, get native code. Adding `120-real` is a one-line change in
+[`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml)
+once a green run shows what one pass really costs.
 
 ## DSpark drafter — not recommended
 
