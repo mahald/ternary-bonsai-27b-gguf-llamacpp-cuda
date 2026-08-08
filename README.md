@@ -104,7 +104,6 @@ services:
       --xtc-threshold 0.2
       --presence-penalty 0.3
       --repeat-penalty 1.0
-      --cache-ram 4096
       -lv 3
     deploy:
       resources:
@@ -150,7 +149,10 @@ Notes:
   needed to verify the setup — buffer placement, offloaded layer count, CUDA
   device table (see
   [Troubleshooting](#troubleshooting-slow-inference-all-cpu-cores-at-100-)).
-- **`--cache-ram 4096`** caps the host-RAM prompt cache at 4 GiB.
+- **No `--cache-ram`**: dynamic VBR disables the host-RAM prompt cache
+  outright (`prompt cache state storage is not supported by dynamic VBR
+  (KV tiers change at runtime), it will be disabled`), so the flag `:v3`
+  carried would be a no-op. See [What VBR costs you](#what-vbr-costs-you).
 - **Sampling defaults** are set server-side (`--temp 0.7 --top-p 0.95
   --top-k 20 --min-p 0.1 --xtc-probability 0.8 --xtc-threshold 0.2
   --presence-penalty 0.3 --repeat-penalty 1.0`); they apply to any request
@@ -271,6 +273,16 @@ switch off `:v3`:
   off in dynamic mode (context checkpoints stay enabled on hybrid models such
   as this one). Generation stops cleanly when the context fills instead of
   sliding the window.
+- **The host-RAM prompt cache goes with them.** The server says so on
+  startup: `prompt cache state storage is not supported by dynamic VBR (KV
+  tiers change at runtime), it will be disabled`. In-slot prefix reuse still
+  works — a follow-up turn in the same slot does not re-prefill — but a
+  conversation evicted from its slot is gone and has to be prefilled from
+  scratch. Given that filling the window takes ~15 minutes, this is the
+  sharpest edge of the trade: **you get the depth, but you pay full price for
+  every cold session.** If your workload is many short-lived sessions rather
+  than a few long ones, `:v3` with its working prompt cache may serve you
+  better.
 - **Flash attention is force-enabled**, so a backend that cannot do FA is not
   an option.
 - **KV that lands on the CPU falls back to q8_0** — irrelevant here, since

@@ -26,7 +26,6 @@ services:
       --xtc-threshold 0.2
       --presence-penalty 0.3
       --repeat-penalty 1.0
-      --cache-ram 4096
       -lv 3
     deploy:
       resources:

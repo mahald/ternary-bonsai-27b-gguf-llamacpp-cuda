@@ -3,3 +3,6 @@ llama.cpp/
 *.gguf
 # pi-subagents runtime artifacts (subagent transcripts can contain sensitive data)
 .pi-subagents/
+
+# Local machine-specific compose override (see build-native.sh)
+docker-compose.override.yml
