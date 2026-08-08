@@ -73,7 +73,8 @@ reasoning in `message.reasoning_content`. Set `max_tokens` generously
 ## docker-compose.yml example
 
 The [`docker-compose.yml`](docker-compose.yml) in this repo, tuned for a
-12 GB GPU (RTX 4080 Laptop):
+12 GB GPU (RTX 4080 Laptop). Comments are stripped here for readability — the
+file itself carries them inline:
 
 ```yaml
 services:
@@ -113,6 +114,31 @@ services:
               count: all
               capabilities: [gpu]
 ```
+
+> ### ⚠️ `--presence-penalty 0.0` assumes a loop breaker in your client
+>
+> This setup pairs the server with
+> **[loop-guard](https://github.com/isr4el-silv4/loop-guard)**, a pi extension
+> that detects and breaks LLM repetition loops in tool calls, thinking blocks
+> and streaming output:
+>
+> ```bash
+> pi install npm:@isr4el-silv4/loop-guard
+> ```
+>
+> Bonsai is a thinking model, and thinking models loop. Up to `:v3` a mild
+> `--presence-penalty 0.3` was the guard — but that is the wrong layer: a
+> sampler penalty sees token probabilities and nothing else, so it cannot tell
+> legitimate repetition during reasoning from a real loop. (Same blind spot
+> made the DRY sampler hallucinate with this model.) loop-guard judges observed
+> behaviour instead — repeated tool calls, cycling tool sequences, stagnant
+> results — which makes the sampler penalty redundant and lets `0.0` buy
+> maximum code fidelity. It is also what made reasoning effort `high`
+> comfortable, where this setup used to run `medium`.
+>
+> **If nothing in your client watches for loops, set `--presence-penalty` back
+> to `0.3`.** `0.0` buys code fidelity, not loop immunity. Details:
+> [Extensions in use](#extensions-in-use).
 
 Notes:
 
