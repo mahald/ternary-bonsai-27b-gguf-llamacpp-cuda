@@ -425,13 +425,39 @@ developed and tested on. Three of them matter for *this* model specifically:
 - **[pi-subagents](https://pi.dev/packages/pi-subagents)** — delegation and
   multi-agent workflows, capped at 2 concurrent to match the server's 3 slots
   (see [above](#subagent-parallelism-and-timeouts-pi-subagents-extension)).
+- **[pi-lens](https://pi.dev/packages/pi-lens)** — LSP diagnostics and
+  navigation, language-specific linters and type-checkers on every write/edit,
+  ast-grep and tree-sitter structural rules, `symbol_search` over a warm word
+  index, and a read-guard that blocks edits to files the agent has not read.
+  The reason this earns a place in a *local-model* setup: every correctness
+  check it answers deterministically is one the model does not have to spend
+  tokens on. At ~45 tok/s with a thinking model, a "write, run the type
+  checker, read the error, fix" round-trip is minutes; a compiler-grade
+  diagnostic delivered inline at edit time is free. The cheaper your tokens,
+  the less this matters — which is exactly why it matters more here than on a
+  fast cloud model.
+- **[pi-memory](https://pi.dev/packages/pi-memory)** — semantic search over
+  daily logs and memory files. Related to the same constraint from the other
+  side: dynamic VBR disables the host-RAM prompt cache (see
+  [What VBR costs you](#what-vbr-costs-you)), so a cold session re-prefills
+  from scratch. Keeping durable context in retrievable notes rather than in an
+  ever-growing conversation is the cheaper shape here.
 
-Also installed, but model-agnostic — nothing about them is specific to Bonsai:
-`pi-memory` (semantic search over memory files), `pi-lens` (LSP, linters,
-type-checking), `pi-agent-browser-native` (browser automation),
-`@gwynnnplaine/pi-github` (issues/PRs/diffs via the `gh` CLI), `@piex-dev/dap`
-(Debug Adapter Protocol), `@senad-d/micme` (local voice dictation),
-`@vigolium/piolium` (multi-phase security audits).
+The rest are general-purpose — nothing about them is specific to Bonsai, but
+they are part of the environment these measurements were taken in:
+
+| Extension | What it does |
+|---|---|
+| [`pi-agent-browser-native`](https://pi.dev/packages/pi-agent-browser-native) | Browser automation as a native tool |
+| [`@gwynnnplaine/pi-github`](https://pi.dev/packages/@gwynnnplaine/pi-github) | GitHub issues, PRs, diffs, checks and code via the `gh` CLI |
+| [`@piex-dev/dap`](https://pi.dev/packages/@piex-dev/dap) | Debug Adapter Protocol — run a debugger from the agent |
+| [`@senad-d/micme`](https://pi.dev/packages/@senad-d/micme) | Local voice dictation for prompts (Alt+M) |
+| [`@vigolium/piolium`](https://pi.dev/packages/@vigolium/piolium) | Multi-phase repository security audits with specialist sub-agents |
+
+One caveat on the last one: piolium fans out sub-agents and its own docs warn
+that full audit runs take hours. Against a single 12 GB GPU that means the
+3-slot cap and the prefill cost, not the model's throughput, set the pace —
+see [Parallelism expectations](#parallelism-expectations-one-12-gb-gpu).
 
 ## pi agent configuration examples
 
