@@ -102,7 +102,7 @@ services:
       --min-p 0.1
       --xtc-probability 0.8
       --xtc-threshold 0.2
-      --presence-penalty 0.3
+      --presence-penalty 0.0
       --repeat-penalty 1.0
       -lv 3
     deploy:
@@ -155,22 +155,31 @@ Notes:
   carried would be a no-op. See [What VBR costs you](#what-vbr-costs-you).
 - **Sampling defaults** are set server-side (`--temp 0.7 --top-p 0.95
   --top-k 20 --min-p 0.1 --xtc-probability 0.8 --xtc-threshold 0.2
-  --presence-penalty 0.3 --repeat-penalty 1.0`); they apply to any request
+  --presence-penalty 0.0 --repeat-penalty 1.0`); they apply to any request
   that doesn't send its own values. `temp 0.7`, `top-p 0.95` and `top-k 20`
   are the model card's own eval values. On top of those, `min-p 0.1` trims the
   low-probability tail, and XTC (exclude-top-choices, probability 0.8 /
   threshold 0.2) prevents the sampler from reflexively locking onto the
   highest-probability token when two candidates are close — a known quality
-  boost for thinking models. The mild presence penalty guards against the
-  repetition loops thinking models are prone to; set it to 0.0 for maximum
-  code fidelity — sensible if your client breaks loops itself, e.g. pi's
-  [loop-guard](#extensions-in-use). Don't lower the temperature much —
-  near-greedy decoding makes reasoning models loop.
+  boost for thinking models. Don't lower the temperature much — near-greedy
+  decoding makes reasoning models loop.
+- **`--presence-penalty 0.0`, changed in v4.** Up to `:v3` this was a mild
+  `0.3`, there to blunt the repetition loops thinking models fall into. It is
+  0.0 now because a sampler penalty is the wrong layer for that job: it sees
+  token probabilities and nothing else, so it cannot distinguish legitimate
+  repetition during reasoning from a real loop — the same blind spot that made
+  the DRY sampler hallucinate with this model. An agent-level loop breaker
+  judges observed behaviour instead (repeated tool calls, cycling tool
+  sequences, stagnant results), and pi's
+  [loop-guard](#extensions-in-use) is what this setup uses. **Set it back to
+  0.3 if nothing in your client watches for loops** — 0.0 buys code fidelity,
+  not loop immunity.
 - **Repetition loops?** Stick to the neutral sampling defaults first. In our
   testing, enabling the DRY sampler (`--dry-multiplier 0.8`) made this model
   hallucinate — thinking models legitimately repeat phrases while reasoning,
-  and DRY forces them off the correct path. If loops persist, try a mild
-  `--presence-penalty 0.3` instead.
+  and DRY forces them off the correct path. If loops persist, put
+  `--presence-penalty 0.3` back (see above) or, better, let the client break
+  loops on observed behaviour.
 - Use `Ternary-Bonsai-27B-Q2_g64.gguf` with `:v2` and newer. The old
   `Q2_0.gguf` (g128) does **not** load with these images — it only works with
   `:v1` (PrismML fork, `QK2_0 = 128`).
@@ -405,17 +414,16 @@ developed and tested on. Three of them matter for *this* model specifically:
 - **[loop-guard](https://github.com/isr4el-silv4/loop-guard)**
   (`npm:@isr4el-silv4/loop-guard`) — detects and breaks repetition loops in
   tool calls, thinking blocks and streaming output, escalating hint → block →
-  terminate. This is the interesting one here. Bonsai is a thinking model, and
-  thinking models loop; the whole reason this README recommends a mild
-  `--presence-penalty 0.3` is to blunt that. But a sampler penalty only sees
-  token probabilities — it cannot tell a legitimate repetition during
-  reasoning from a genuine loop, which is exactly why the DRY sampler made
-  this model hallucinate. loop-guard works one layer up, on observed
-  behaviour: identical tool calls, cycling tool sequences, stagnant results,
-  repeated reasoning lines. With it running you can drop the sampler penalty
-  entirely — `--presence-penalty 0.0`, the value this README already suggests
-  "for maximum code fidelity" — and let the agent layer handle loops. That is
-  what the development machine runs. It also raised the usable reasoning
+  terminate. This is the interesting one here — it is the reason the compose
+  file ships `--presence-penalty 0.0`. Bonsai is a thinking model, and
+  thinking models loop; up to `:v3` a mild `--presence-penalty 0.3` was the
+  guard. But a sampler penalty only sees token probabilities — it cannot tell
+  a legitimate repetition during reasoning from a genuine loop, which is
+  exactly why the DRY sampler made this model hallucinate. loop-guard works
+  one layer up, on observed behaviour: identical tool calls, cycling tool
+  sequences, stagnant results, repeated reasoning lines. With it running the
+  sampler penalty is redundant, so it goes to 0.0 and buys maximum code
+  fidelity instead. It also raised the usable reasoning
   effort from `medium` to `high`: more thinking means more opportunity to
   loop, and that cost no longer has to be paid by keeping the effort low.
   Note this is a rationale, not a measured result: no loop rate was
