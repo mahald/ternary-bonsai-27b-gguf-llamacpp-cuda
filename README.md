@@ -163,8 +163,9 @@ Notes:
   highest-probability token when two candidates are close — a known quality
   boost for thinking models. The mild presence penalty guards against the
   repetition loops thinking models are prone to; set it to 0.0 for maximum
-  code fidelity. Don't lower the temperature much — near-greedy decoding makes
-  reasoning models loop.
+  code fidelity — sensible if your client breaks loops itself, e.g. pi's
+  [loop-guard](#extensions-in-use). Don't lower the temperature much —
+  near-greedy decoding makes reasoning models loop.
 - **Repetition loops?** Stick to the neutral sampling defaults first. In our
   testing, enabling the DRY sampler (`--dry-multiplier 0.8`) made this model
   hallucinate — thinking models legitimately repeat phrases while reasoning,
@@ -391,6 +392,39 @@ tool call (a per-call value always wins over the agent default).
 > (`pi install npm:pi-effort`) with the reasoning effort set to `medium`
 > (`/effort medium`). Other effort levels and clients should work but see less
 > coverage.
+
+### Extensions in use
+
+For the record, the pi extensions installed on the machine this setup is
+developed and tested on. Three of them matter for *this* model specifically:
+
+- **[loop-guard](https://github.com/isr4el-silv4/loop-guard)**
+  (`npm:@isr4el-silv4/loop-guard`) — detects and breaks repetition loops in
+  tool calls, thinking blocks and streaming output, escalating hint → block →
+  terminate. This is the interesting one here. Bonsai is a thinking model, and
+  thinking models loop; the whole reason this README recommends a mild
+  `--presence-penalty 0.3` is to blunt that. But a sampler penalty only sees
+  token probabilities — it cannot tell a legitimate repetition during
+  reasoning from a genuine loop, which is exactly why the DRY sampler made
+  this model hallucinate. loop-guard works one layer up, on observed
+  behaviour: identical tool calls, cycling tool sequences, stagnant results,
+  repeated reasoning lines. With it running you can drop the sampler penalty
+  entirely — `--presence-penalty 0.0`, the value this README already suggests
+  "for maximum code fidelity" — and let the agent layer handle loops. That is
+  what the development machine runs. Note this is a rationale, not a measured
+  result: no loop rate was benchmarked with and without it.
+- **[pi-effort](https://pi.dev/packages/pi-effort)** — reasoning effort
+  control; see the testing note above.
+- **[pi-subagents](https://pi.dev/packages/pi-subagents)** — delegation and
+  multi-agent workflows, capped at 2 concurrent to match the server's 3 slots
+  (see [above](#subagent-parallelism-and-timeouts-pi-subagents-extension)).
+
+Also installed, but model-agnostic — nothing about them is specific to Bonsai:
+`pi-memory` (semantic search over memory files), `pi-lens` (LSP, linters,
+type-checking), `pi-agent-browser-native` (browser automation),
+`@gwynnnplaine/pi-github` (issues/PRs/diffs via the `gh` CLI), `@piex-dev/dap`
+(Debug Adapter Protocol), `@senad-d/micme` (local voice dictation),
+`@vigolium/piolium` (multi-phase security audits).
 
 ## pi agent configuration examples
 
