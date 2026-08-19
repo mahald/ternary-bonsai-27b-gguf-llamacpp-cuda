@@ -1,7 +1,8 @@
 models/
 llama.cpp/
 *.gguf
-# pi-subagents runtime artifacts (subagent transcripts can contain sensitive data)
+# Subagent transcripts left by the pi client; they can contain sensitive data.
+# omp keeps its own under ~/.omp, not in the project.
 .pi-subagents/
 
 # Local machine-specific compose override (see build-native.sh)

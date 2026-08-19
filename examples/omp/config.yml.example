@@ -1,0 +1,62 @@
+# Merge into ~/.omp/agent/config.yml — omp writes its own settings there, so
+# do not overwrite an existing file. Every key here can also be set with
+#   omp config set <key> <value>
+#
+# Requires the bonsai-local provider from models.yml.example.
+
+# The :medium suffix is the reasoning-effort setting — omp carries thinking
+# levels in the core, no extension involved. Levels: minimal, low, medium,
+# high, xhigh, max, auto.
+#
+# Note it is inert against this server: omp sends the level as
+# reasoning_effort, and llama-server drops it for this model (measured —
+# low/high/absent return byte-identical reasoning). Bonsai's chat template
+# knows only enable_thinking, not effort. Keeping it explicit costs nothing
+# and documents intent.
+modelRoles:
+  default: bonsai-local/bonsai-27b:medium
+
+# Fallback level for roles that carry no :suffix. Avoid `auto` on an offline
+# box: it classifies each turn with providers.autoThinkingModel, which
+# defaults to `online`.
+defaultThinkingLevel: medium
+
+# Both loop guards are omp defaults; spelled out because --presence-penalty
+# 0.0 in docker-compose.yml depends on the client breaking loops.
+#   loopGuard         — degenerate reasoning loops in the stream. The exact
+#                       suffix-cycle detector applies to every model; the
+#                       semantic detectors are gated to the Gemini/DeepSeek/
+#                       Grok families and do NOT fire for bonsai-27b.
+#   toolCallLoopGuard — model-agnostic: the same tool call `threshold` times
+#                       in a row gets steered away from.
+model:
+  loopGuard:
+    enabled: true
+    checkAssistantContent: true
+  toolCallLoopGuard:
+    enabled: true
+    threshold: 5
+
+# Sampling stays server-side: -1 means "do not send this parameter", so the
+# defaults pinned in docker-compose.yml apply. Listed to make that explicit.
+temperature: -1
+topP: -1
+topK: -1
+minP: -1
+presencePenalty: -1
+repetitionPenalty: -1
+
+# Match the server's slot count (-np 3 in docker-compose.yml).
+#   maxInFlightRequests — concurrent HTTP requests to this provider, shared
+#                         across every local omp process on the same config
+#                         root. At 3, nothing queues invisibly inside
+#                         llama-server.
+#   task.maxConcurrency — concurrent subagents (omp default 32). 2 keeps one
+#                         slot for the parent session.
+# task.maxRuntimeMs stays at its default 0 (unlimited): slow prefill on a
+# 12 GB card needs no timeout workaround.
+providers:
+  maxInFlightRequests:
+    bonsai-local: 3
+task:
+  maxConcurrency: 2

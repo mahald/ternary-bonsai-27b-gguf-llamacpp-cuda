@@ -117,28 +117,20 @@ services:
 
 > ### ⚠️ `--presence-penalty 0.0` assumes a loop breaker in your client
 >
-> This setup pairs the server with
-> **[loop-guard](https://github.com/isr4el-silv4/loop-guard)**, a pi extension
-> that detects and breaks LLM repetition loops in tool calls, thinking blocks
-> and streaming output:
+> Bonsai is a thinking model, and thinking models loop. A sampler penalty is
+> the wrong layer to catch that: it sees token probabilities and nothing else,
+> so it cannot tell legitimate repetition during reasoning from a real loop.
+> (Same blind spot made the DRY sampler hallucinate with this model.) A guard
+> at the agent layer judges observed behaviour instead — a stream cycling on
+> itself, the same tool call over and over — which makes the sampler penalty
+> redundant and lets `0.0` buy maximum code fidelity.
 >
-> ```bash
-> pi install npm:@isr4el-silv4/loop-guard
-> ```
->
-> Bonsai is a thinking model, and thinking models loop. Up to `:v3` a mild
-> `--presence-penalty 0.3` was the guard — but that is the wrong layer: a
-> sampler penalty sees token probabilities and nothing else, so it cannot tell
-> legitimate repetition during reasoning from a real loop. (Same blind spot
-> made the DRY sampler hallucinate with this model.) loop-guard judges observed
-> behaviour instead — repeated tool calls, cycling tool sequences, stagnant
-> results — which makes the sampler penalty redundant and lets `0.0` buy
-> maximum code fidelity. It is also what made reasoning effort `high`
-> comfortable, where this setup used to run `medium`.
+> This setup pairs the server with [omp](https://omp.sh), which ships both
+> guards on by default and needs no extension for them.
 >
 > **If nothing in your client watches for loops, set `--presence-penalty` back
 > to `0.3`.** `0.0` buys code fidelity, not loop immunity. Details:
-> [Extensions in use](#extensions-in-use).
+> [Loop breaking](#loop-breaking-also-built-in).
 
 Notes:
 
@@ -165,7 +157,7 @@ Notes:
   KV-cache pool. Without `--kv-unified`, each slot would get a fixed third of
   `-c` (87381 tokens); with the unified cache, a single request can still use
   the full 262144-token context while the other slots stay available for
-  concurrent requests (e.g. parallel pi subagents). Dynamic VBR forces
+  concurrent requests (e.g. parallel omp subagents). Dynamic VBR forces
   `--kv-unified` anyway as soon as `-np > 1`; it is spelled out here so the
   config still reads correctly if you ever drop `-ct vbr`.
 - **No `-fa on`**: flash attention defaults to `auto`, which already enables
@@ -189,17 +181,14 @@ Notes:
   highest-probability token when two candidates are close — a known quality
   boost for thinking models. Don't lower the temperature much — near-greedy
   decoding makes reasoning models loop.
-- **`--presence-penalty 0.0`, changed in v4.** Up to `:v3` this was a mild
-  `0.3`, there to blunt the repetition loops thinking models fall into. It is
-  0.0 now because a sampler penalty is the wrong layer for that job: it sees
-  token probabilities and nothing else, so it cannot distinguish legitimate
-  repetition during reasoning from a real loop — the same blind spot that made
-  the DRY sampler hallucinate with this model. An agent-level loop breaker
-  judges observed behaviour instead (repeated tool calls, cycling tool
-  sequences, stagnant results), and pi's
-  [loop-guard](#extensions-in-use) is what this setup uses. **Set it back to
-  0.3 if nothing in your client watches for loops** — 0.0 buys code fidelity,
-  not loop immunity.
+- **`--presence-penalty 0.0`** assumes the client breaks loops. A sampler
+  penalty is the wrong layer for that job: it sees token probabilities and
+  nothing else, so it cannot distinguish legitimate repetition during reasoning
+  from a real loop — the same blind spot that made the DRY sampler hallucinate
+  with this model. An agent-level guard judges observed behaviour instead, and
+  omp's [built-in loop guards](#loop-breaking-also-built-in) are what this
+  setup relies on. **Set it back to 0.3 if nothing in your client watches for
+  loops** — 0.0 buys code fidelity, not loop immunity.
 - **Repetition loops?** Stick to the neutral sampling defaults first. In our
   testing, enabling the DRY sampler (`--dry-multiplier 0.8`) made this model
   hallucinate — thinking models legitimately repeat phrases while reasoning,
@@ -342,188 +331,226 @@ requests, not multiplying throughput:
   (measured: 3 concurrent short requests finished in 6.8 s wall vs ~15 s
   serial).
 - **Requests beyond the slot count queue** (llama-server returns no error;
-  they wait for a free slot). pi fan-out of more than 3 concurrent subagents
-  therefore completes in waves.
+  they wait for a free slot). An omp fan-out wider than the slot count
+  therefore completes in waves; cap it with `task.maxConcurrency` and
+  `providers.maxInFlightRequests` (see
+  [Matching the server's 3 slots](#matching-the-servers-3-slots)).
 - **KV pool contention**: with all 3 slots active, the shared 262K pool
   divides ~87K per slot; typical subagent contexts fit easily. Note that under
   VBR the slots also share the *quality* budget — three deep sessions push the
   cache down the tier ladder faster than one does, because the degrade
   controller sees the pool's total mapped bytes, not any single slot's.
 
-## Using with the pi agent
+## Using with omp (oh my pi)
 
-Example for the [pi coding agent](https://pi.dev) — add the server as a
-custom provider in `~/.pi/agent/models.json`:
+[omp](https://omp.sh) ([`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi))
+is the client this setup is developed and tested with. Add the server as a
+custom provider in `~/.omp/agent/models.yml`:
 
-```json
-{
-  "providers": {
-    "bonsai-local": {
-      "baseUrl": "http://127.0.0.1:8080/v1",
-      "api": "openai-completions",
-      "apiKey": "none",
-      "models": [
-        {
-          "id": "bonsai-27b",
-          "name": "Ternary Bonsai 27B (local)",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 262144,
-          "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
-        }
-      ]
-    }
-  }
-}
+```yaml
+providers:
+  bonsai-local:
+    baseUrl: http://127.0.0.1:8080/v1
+    api: openai-completions
+    apiKey: none
+    models:
+      - id: bonsai-27b
+        name: Ternary Bonsai 27B (local)
+        reasoning: true
+        input: [text]
+        contextWindow: 262144
+        maxTokens: 16384
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 ```
 
-Optionally make it the default in `~/.pi/agent/settings.json`:
+and make it the default model role in `~/.omp/agent/config.yml`:
 
-```json
-{
-  "defaultProvider": "bonsai-local",
-  "defaultModel": "bonsai-27b"
-}
+```yaml
+modelRoles:
+  default: bonsai-local/bonsai-27b:medium
 ```
 
-pi has no sampling settings of its own — the sampling defaults configured
-server-side in the compose file apply. Keep `contextWindow` in sync with the
-server's `-c` value.
+Keep `contextWindow` in sync with the server's `-c` value. `apiKey: none`
+satisfies omp's key requirement for a keyless endpoint; `auth: none` does the
+same thing. omp can also probe the server instead of being told about it —
+`discovery: { type: llama.cpp }` on the provider — but an explicit model entry
+is what pins `contextWindow` and `maxTokens` to the values this compose file
+serves.
 
-### Subagent parallelism and timeouts (pi-subagents extension)
+### Reasoning effort: built in, no extension needed
 
-With the [pi-subagents](https://pi.dev/packages/pi-subagents) extension
-installed, the server's 3 slots line up with a `globalConcurrencyLimit` of 2
-so the parent session always keeps one slot free. This also caps top-level
-parallel fan-outs at 2 concurrent subagents (they complete in waves; see
-[Parallelism expectations](#parallelism-expectations-one-12-gb-gpu)).
+The `:medium` in the model role above *is* the reasoning-effort setting. omp
+carries thinking-level control in the core, on four scopes:
 
-`~/.pi/agent/extensions/subagent/config.json`:
-
-```json
-{
-	"globalConcurrencyLimit": 2,
-	"parallel": { "concurrency": 2 }
-}
-```
-
-The builtin agents' default 30-minute run timeout can be too tight for Bonsai
-on a 12 GB GPU (slow prefill + ~45 tok/s decode). Eject them to user scope
-and add `timeoutMs` to the frontmatter (60 min here):
-
-```bash
-# for each agent you use: worker, reviewer, researcher, oracle, scout, ...
-pi subagents eject worker          # creates ~/.pi/agent/agents/worker.md
-# add to the frontmatter:
-#   timeoutMs: 3600000
-```
-
-Or override per run with `timeoutMs` / `maxRuntimeMs` on the `subagent`
-tool call (a per-call value always wins over the agent default).
-
-> **Testing note:** this setup is primarily tested with **oh my pi** using the
-> [pi-effort](https://pi.dev/packages/pi-effort) extension
-> (`pi install npm:pi-effort`) with the reasoning effort set to `medium`
-> (`/effort medium`).
->
-> The original `pi` agent works, but its `loop-guard` extension is too sensitive:
-> it escalates legitimate reasoning repetition to block/terminate too eagerly. oh
-> my pi has a better loop breaker — more precise, less aggressive. With the
-> improved breaker, `medium` reasoning effort is comfortable (previously only
-> `high` worked reliably, because longer reasoning meant more opportunity to
-> loop, and the old loop guard had to stay on high alert).
->
-> The model itself is super intelligent — the tighter loop detection means
-> we can afford to let it think more without the safety net doing most of the
-> work.
->
-> Other effort levels and clients should work, but see less coverage.
->
-
-### Extensions in use
-
-For the record, the pi extensions installed on the machine this setup is
-- **[loop-guard](https://github.com/isr4el-silv4/loop-guard)
-  (`npm:@isr4el-silv4/loop-guard`) — detects and breaks repetition loops in
-  tool calls, thinking blocks and streaming output, escalating hint → block →
-  terminate. This is the interesting one here — it is the reason the compose
-  file ships `--presence-penalty 0.0`. Bonsai is a thinking model, and
-  thinking models loop; up to `:v3` a mild `--presence-penalty 0.3` was the
-  guard. But a sampler penalty only sees token probabilities — it cannot tell
-  a legitimate repetition during reasoning from a genuine loop, which is
-  exactly why the DRY sampler made this model hallucinate.
-
-  The original `pi` agent uses loop-guard, but it is too sensitive — it
-  escalates legitimate reasoning repetition to block/terminate too eagerly. oh
-  my pi has a better loop breaker, more precise and less aggressive. With the
-  improved breaker, `medium` reasoning effort is comfortable (previously only
-  `high` worked reliably, because longer reasoning meant more opportunity
-  to loop, and the old loop guard had to stay on high alert).
-
-  Note this is a rationale, not a measured result: no loop rate was
-  benchmarked with and without it.
-- **[pi-memory](https://pi.dev/packages/pi-memory)** — semantic search over
-  daily logs and memory files. Related to the same constraint from the other
-  side: dynamic VBR disables the host-RAM prompt cache (see
-  [What VBR costs you](#what-vbr-costs-you)), so a cold session re-prefills
-  from scratch. Keeping durable context in retrievable notes rather than in an
-  ever-growing conversation is the cheaper shape here.
-
-The rest are general-purpose — nothing about them is specific to Bonsai, but
-they are part of the environment these measurements were taken in:
-
-| Extension | What it does |
+| Scope | How |
 |---|---|
-| [`pi-agent-browser-native`](https://pi.dev/packages/pi-agent-browser-native) | Browser automation as a native tool |
+| One model role | the `:level` suffix — `bonsai-local/bonsai-27b:medium` |
+| Global default | `defaultThinkingLevel` in `config.yml` (`omp config set defaultThinkingLevel medium`) |
+| One run | `--thinking <level>` |
+| One turn | the `ultrathink` magic keyword, which raises that turn to the model's top supported effort |
+
+Levels are `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, plus `auto`.
+
+#### What the level actually does here: nothing
+
+Worth knowing before you tune it. On an `openai-completions` provider omp puts
+the level on the wire as `reasoning_effort` and nothing else — no token
+budget, and `max_completion_tokens` stays at the model's `maxTokens` at every
+level. Captured from omp through a logging proxy:
+
+```json
+{"model": "bonsai-27b", "reasoning_effort": "medium",
+ "max_completion_tokens": 16384, "stream": true, "...": "..."}
+```
+
+llama-server then drops it. Measured against this server with deterministic
+sampling (`temperature 0`, `top_k 1`, `xtc_probability 0`, fixed `seed`), the
+same prompt at `reasoning_effort` `low`, `high`, and absent returns
+**byte-identical** reasoning — same length, same SHA-1 — and `/apply-template`
+renders the same prompt for all three. Bonsai's chat template has no effort
+branch; the only reasoning switch in it is `enable_thinking`.
+
+So `:medium` above is a label on the omp side, not a knob on the model. What
+does reach the model:
+
+| Want | How |
+|---|---|
+| No reasoning at all | `chat_template_kwargs: {"enable_thinking": false}` — measured: reasoning drops to zero, the answer stays correct |
+| A ceiling on reasoning + answer together | `max_tokens` / `maxTokens`; reasoning tokens count against it |
+
+Keep an explicit level anyway rather than `auto`: `defaultThinkingLevel: auto`
+classifies each turn's difficulty with a *separate* model,
+`providers.autoThinkingModel`, which defaults to `online` — an outbound call
+this setup otherwise never makes.
+
+### Loop breaking: also built in
+
+omp ships two loop guards, both on by default, and they are the reason the
+compose file can run `--presence-penalty 0.0`:
+
+```yaml
+model:
+  loopGuard:
+    enabled: true            # degenerate reasoning loops in the stream
+    checkAssistantContent: true
+  toolCallLoopGuard:
+    enabled: true            # the same tool call, over and over
+    threshold: 5
+```
+
+What each one actually does for *this* model is worth being precise about:
+
+- **`model.loopGuard`** watches streamed deltas. Its exact suffix-cycle
+  detector — a byte-identical unit repeated back-to-back — applies to every
+  model, `bonsai-27b` included. On a hit the turn is terminated as a retryable
+  stream stall and re-sampled, up to three attempts. Its *semantic* detectors
+  (near-duplicate paragraphs by word-trigram fingerprint, and the
+  "progress-lexicon stall" where filler gets reshuffled without new vocabulary)
+  are gated to the Gemini, DeepSeek and Grok model families, so they do **not**
+  fire for a custom provider id like `bonsai-27b`.
+- **`model.toolCallLoopGuard`** is model-agnostic. It canonicalizes tool calls
+  across turns and, once the same call repeats consecutively `threshold` (5)
+  times, injects a corrective steer summarizing what the agent keeps doing and
+  what it keeps getting back.
+
+That is a behavioural guard — it judges what the agent did, not what the token
+distribution looked like — which is the layer a sampler penalty cannot reach. A
+sampler penalty sees token probabilities and nothing else, so it cannot tell
+legitimate repetition during reasoning from a real loop; that is the same blind
+spot that made the DRY sampler hallucinate with this model. Note this is a
+rationale for the pairing, not a measured result: no loop rate was benchmarked
+with the guards on and off.
+
+**If your client has no loop breaker, set `--presence-penalty` back to `0.3`.**
+`0.0` buys code fidelity, not loop immunity.
+
+### Sampling stays server-side
+
+omp exposes `temperature`, `topP`, `topK`, `minP`, `presencePenalty` and
+`repetitionPenalty`, all defaulting to `-1`, which means "use the
+provider/model default — do not send the parameter". Leave them at `-1` and
+the sampling defaults pinned in the compose file apply. Set any of them and it
+overrides the server for every request from that client.
+
+### Matching the server's 3 slots
+
+Subagents are built into omp (the `task` tool); there is no extension to
+install. Two settings keep a fan-out from fighting the server for slots:
+
+```yaml
+providers:
+  maxInFlightRequests:
+    bonsai-local: 3
+task:
+  maxConcurrency: 2
+```
+
+- **`providers.maxInFlightRequests`** caps concurrent LLM HTTP requests per
+  provider, and the cap is shared across every local `omp` process using the
+  same config root. Pinning it to the server's `-np 3` means omp never has
+  requests queued *inside* llama-server where it cannot see or cancel them.
+- **`task.maxConcurrency`** (default 32 — far above what one GPU can serve)
+  bounds concurrent subagents. 2 leaves the parent session a slot of its own.
+  Fan-outs larger than the cap complete in waves; see
+  [Parallelism expectations](#parallelism-expectations-one-12-gb-gpu).
+- **No subagent timeout to work around.** `task.maxRuntimeMs` defaults to `0`,
+  meaning unlimited, so slow prefill on a 12 GB card needs no config change.
+  Set it only if you want a hard wall-clock ceiling.
+- Idle subagent sessions are parked after `task.agentIdleTtlMs` (7 minutes),
+  and each subagent gets a soft budget of `task.softRequestBudget` (200)
+  provider requests before it is nudged to wrap up.
+
+Custom subagents are markdown files in `~/.omp/agent/agents/*.md` (user scope)
+or `.omp/agents/*.md` (project scope). The frontmatter takes `name`,
+`description`, `model`, `thinking-level`, `spawns`, `blocking`, `advisor` and
+`autoloadSkills`, so a subagent can pin its own model — a cloud one, say —
+while the parent session stays on Bonsai.
+
+### Plugins in use
+
+omp covers reasoning effort, loop breaking, subagents, memory and LSP natively,
+so the plugin list is short. For the record, what is installed on the machine
+these measurements were taken on — none of it is specific to Bonsai:
+
+| Plugin | What it does |
+|---|---|
+| [`pi-lens`](https://pi.dev/packages/pi-lens) | Real-time code feedback: linters, formatters, type-checking and structural analysis on top of the LSP layer |
+| [`pi-agent-browser-native`](https://pi.dev/packages/pi-agent-browser-native) | Exposes agent-browser as a native tool for browser automation |
 | [`@gwynnnplaine/pi-github`](https://pi.dev/packages/@gwynnnplaine/pi-github) | GitHub issues, PRs, diffs, checks and code via the `gh` CLI |
-| [`@piex-dev/dap`](https://pi.dev/packages/@piex-dev/dap) | Debug Adapter Protocol — run a debugger from the agent |
-| [`@senad-d/micme`](https://pi.dev/packages/@senad-d/micme) | Local voice dictation for prompts (Alt+M) |
-| [`@vigolium/piolium`](https://pi.dev/packages/@vigolium/piolium) | Multi-phase repository security audits with specialist sub-agents |
+| [`@piex-dev/dap`](https://pi.dev/packages/@piex-dev/dap) | Debug Adapter Protocol — debug a program from inside the agent |
+| [`@vtstech/pi-model-test`](https://pi.dev/packages/@vtstech/pi-model-test) | Model benchmark/testing extension — useful for checking what a local endpoint actually supports |
+| [`@juicesharp/rpiv-voice`](https://pi.dev/packages/@juicesharp/rpiv-voice) | Voice dictation via `/voice`, on-device STT with sherpa-onnx Whisper |
 
-One caveat on the last one: piolium fans out sub-agents and its own docs warn
-that full audit runs take hours. Against a single 12 GB GPU that means the
-3-slot cap and the prefill cost, not the model's throughput, set the pace —
-see [Parallelism expectations](#parallelism-expectations-one-12-gb-gpu).
+A deterministic check is worth more here than on a fast cloud model: at
+~45 tok/s a "write, run the type checker, read the error, fix" round-trip costs
+minutes of decode, while a compiler-grade diagnostic delivered inline at edit
+time costs nothing. That is the whole argument for `pi-lens` in a local-model
+setup — the cheaper your tokens, the less it matters. These are npm packages
+shared with the `pi` ecosystem; omp installs them into `~/.omp/plugins`.
 
-## pi agent configuration examples
+## Configuration examples
 
-The [`examples/pi/`](examples/pi/) directory mirrors the config used and
-tested with this repo — copy them into `~/.pi/agent/` as needed:
+The [`examples/omp/`](examples/omp/) directory mirrors the config used and
+tested with this repo — copy the parts you need into `~/.omp/agent/`:
 
 | Example file | Destination | Purpose |
 |---|---|---|
-| `examples/pi/models.json.example` | `~/.pi/agent/models.json` | bonsai-local provider only (`apiKey: "none"`) |
-| `examples/pi/models.cloud.example` | — | bonsai-local **plus** a cloud provider with a `\<YOUR_API_KEY\>` placeholder; **never commit real keys** |
-| `examples/pi/settings.json.example` | `~/.pi/agent/settings.json` | defaults (`bonsai-27b`, thinking `medium`) + the extension packages |
-| `examples/pi/subagent-config.json` | `~/.pi/agent/extensions/subagent/config.json` | pi-subagents concurrency caps: 2 subagents max, 2 parallel |
-| `examples/pi/agents/worker.md.example` | `~/.pi/agent/agents/worker.md` | ejected `worker` with `timeoutMs: 3600000` (60 min) in the frontmatter |
-
-**Required extension:** the subagent config only takes effect with
-[pi-subagents](https://pi.dev/packages/pi-subagents) installed:
+| `examples/omp/models.yml.example` | `~/.omp/agent/models.yml` | the `bonsai-local` provider on its own |
+| `examples/omp/models.cloud.yml.example` | — | `bonsai-local` **plus** a cloud provider with a `<YOUR_API_KEY>` placeholder; **never commit real keys** |
+| `examples/omp/config.yml.example` | `~/.omp/agent/config.yml` | default role, effort, loop guards, and the slot-matching caps above |
 
 ```bash
-pi install npm:pi-subagents
+cp examples/omp/models.yml.example  ~/.omp/agent/models.yml
+cp examples/omp/config.yml.example  ~/.omp/agent/config.yml
 ```
 
-Optional but used in this setup: `npm:pi-effort` (reasoning effort control),
-`npm:pi-memory` (memory files), and `npm:@isr4el-silv4/loop-guard` — the last
-one is what makes `thinking: medium` and `--presence-penalty 0.0` a sensible
-pairing; see [Extensions in use](#extensions-in-use).
+`config.yml` is where omp writes your own settings, so merge rather than
+overwrite if you already have one — every key in the example can also be set
+with `omp config set <key> <value>`.
 
-Apply with e.g.:
-
-```bash
-cp examples/pi/models.json.example ~/.pi/agent/models.json
-cp examples/pi/subagent-config.json ~/.pi/agent/extensions/subagent/config.json
-mkdir -p ~/.pi/agent/agents
-cp examples/pi/agents/worker.md.example ~/.pi/agent/agents/worker.md
-```
-
-> **Security:** the examples contain no secrets. Your real `~/.pi/agent/`
-> files may hold API keys (`auth.json`, `models.json` with cloud providers) —
-> never copy or commit those. Treat `.pi-subagents/` (subagent transcripts)
-> as sensitive too; it is gitignored in this repo.
+> **Security:** the examples contain no secrets. Your real `~/.omp/agent/`
+> holds credentials in `agent.db` and may hold API keys in `models.yml` — never
+> copy or commit those.
 
 ## Troubleshooting: slow inference, all CPU cores at 100 %
 
@@ -613,10 +640,10 @@ docker build -t mhald/ternary-bonsai-27b-gguf-llamacpp-cuda:dev .
 ```
 
 [`Dockerfile`](Dockerfile) is the multi-arch build behind the published
-images. Three things differ from `:v3`:
+images. Three things about it are easy to get wrong:
 
-- `LLAMACPP_REPO` now points at **buun-llama-cpp**, pinned via `LLAMACPP_REF`.
-  To go back to official llama.cpp, override both args.
+- `LLAMACPP_REPO` points at **buun-llama-cpp**, pinned via `LLAMACPP_REF`. To
+  build against official llama.cpp instead, override both args.
 - `GGML_CUDA_FA_ALL_QUANTS=ON` is **required, not optional**. Without it the
   CMake glob only compiles the scalar turbo flash-attention instances and
   skips the TCQ ones — exactly the tiers VBR degrades into.
@@ -626,9 +653,8 @@ images. Three things differ from `:v3`:
   `undefined reference`.
 
 The container ships its own **CUDA 13.3.1** runtime — the host needs a driver
-from the 13.x series. Note that CUDA 13 dropped Maxwell, Pascal and Volta, so
-the multi-arch default set now starts at Turing (7.5), unlike the CUDA 12
-based `:v3` image.
+from the 13.x series. CUDA 13 dropped Maxwell, Pascal and Volta, so the
+multi-arch set starts at Turing (7.5).
 
 CI: pushes to `main` publish `:latest`, tags `v*` publish the version tag to
 Docker Hub (GitHub Actions, needs `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
@@ -705,3 +731,4 @@ Setup files: MIT. llama.cpp is MIT, the Bonsai model is Apache 2.0
 - **CUDA Q2_0 PR (merged upstream, in `:v2` and newer):** https://github.com/ggml-org/llama.cpp/pull/25707
 - **llama.cpp fork (g128 kernels, in `:v1`):** https://github.com/PrismML-Eng/llama.cpp
 - **Whitepaper & demos:** https://github.com/PrismML-Eng/Bonsai-demo
+- **omp (oh my pi), the client used here:** https://omp.sh · https://github.com/can1357/oh-my-pi

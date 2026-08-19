@@ -16,27 +16,30 @@ services:
     #
     #   --presence-penalty 0.0
     #                       >>> THIS VALUE ASSUMES A LOOP BREAKER IN YOUR CLIENT <<<
-    #                       This setup pairs the server with loop-guard, a pi
-    #                       extension that detects and breaks LLM loops:
-    #                         pi install npm:@isr4el-silv4/loop-guard
-    #                         https://github.com/isr4el-silv4/loop-guard
     #
-    #                       Thinking models fall into repetition loops, and a mild
-    #                       0.3 used to be the guard here. But a sampler penalty
-    #                       only sees token probabilities — it cannot tell
+    #                       Thinking models fall into repetition loops, but a
+    #                       sampler penalty is the wrong layer to catch them: it
+    #                       only sees token probabilities, so it cannot tell
     #                       legitimate repetition during reasoning from a real
-    #                       loop, which is exactly how the DRY sampler made this
-    #                       model hallucinate. loop-guard judges observed
-    #                       behaviour instead (repeated tool calls, cycling tool
-    #                       sequences, stagnant results), which makes the sampler
-    #                       penalty redundant — so 0.0 buys maximum code fidelity.
+    #                       loop — which is exactly how the DRY sampler made this
+    #                       model hallucinate. A guard at the agent layer judges
+    #                       observed behaviour instead (a stream cycling on
+    #                       itself, the same tool call over and over), which makes
+    #                       the sampler penalty redundant — so 0.0 buys maximum
+    #                       code fidelity.
+    #
+    #                       This setup pairs the server with omp (https://omp.sh),
+    #                       which ships both guards on by default:
+    #                         model.loopGuard.enabled
+    #                         model.toolCallLoopGuard.enabled
+    #                       No extension needed. See examples/omp/config.yml.example.
     #
     #                       ==> PUT IT BACK TO 0.3 if nothing in your client
     #                           watches for loops. 0.0 buys code fidelity, not
-    #                           loop immunity. See "Extensions in use".
+    #                           loop immunity.
     #
-    # Note there is deliberately no --cache-ram: dynamic VBR disables the
-    # host-RAM prompt cache, so the flag would be a no-op.
+    # There is deliberately no --cache-ram: dynamic VBR disables the host-RAM
+    # prompt cache, so the flag would be a no-op.
     command: >
       -m /models/Ternary-Bonsai-27B-Q2_g64.gguf
       -a bonsai-27b

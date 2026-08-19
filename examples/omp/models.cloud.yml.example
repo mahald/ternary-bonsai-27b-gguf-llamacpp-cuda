@@ -1,0 +1,29 @@
+# Reference only — do NOT copy this file with a real key in it.
+#
+# Same bonsai-local provider as models.yml.example, plus a cloud provider so
+# a heavier model is one /models switch away. Never commit real API keys.
+providers:
+  bonsai-local:
+    baseUrl: http://127.0.0.1:8080/v1
+    api: openai-completions
+    apiKey: none
+    models:
+      - id: bonsai-27b
+        name: Ternary Bonsai 27B (local)
+        reasoning: true
+        input: [text]
+        contextWindow: 262144
+        maxTokens: 16384
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+  openrouter:
+    baseUrl: https://openrouter.ai/api/v1
+    api: openai-completions
+    apiKey: <YOUR_API_KEY>
+    models:
+      - id: moonshotai/kimi-k3
+        name: Kimi K3
+        reasoning: true
+        input: [text, image]
+        contextWindow: 1048576
+        maxTokens: 65536
