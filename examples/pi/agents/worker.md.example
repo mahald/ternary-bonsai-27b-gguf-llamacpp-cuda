@@ -1,4 +1,6 @@
 ---
+co-author: "bonsai-27b-ternary"
+
 name: worker
 description: Implementation agent for normal tasks and approved oracle handoffs
 thinking: high

@@ -422,22 +422,29 @@ pi subagents eject worker          # creates ~/.pi/agent/agents/worker.md
 Or override per run with `timeoutMs` / `maxRuntimeMs` on the `subagent`
 tool call (a per-call value always wins over the agent default).
 
-> **Testing note:** this setup is primarily tested with the pi agent using the
+> **Testing note:** this setup is primarily tested with **oh my pi** using the
 > [pi-effort](https://pi.dev/packages/pi-effort) extension
-> (`pi install npm:pi-effort`) with the reasoning effort set to `high`
-> (`/effort high`). It used to run at `medium` — `high` became comfortable
-> once [loop-guard](#extensions-in-use) was in place, because longer reasoning
-> is exactly where a thinking model has more room to fall into a loop, and
-> that is now caught at the agent layer instead of being priced into the
-> effort setting. Other effort levels and clients should work but see less
-> coverage.
+> (`pi install npm:pi-effort`) with the reasoning effort set to `medium`
+> (`/effort medium`).
+>
+> The original `pi` agent works, but its `loop-guard` extension is too sensitive:
+> it escalates legitimate reasoning repetition to block/terminate too eagerly. oh
+> my pi has a better loop breaker — more precise, less aggressive. With the
+> improved breaker, `medium` reasoning effort is comfortable (previously only
+> `high` worked reliably, because longer reasoning meant more opportunity to
+> loop, and the old loop guard had to stay on high alert).
+>
+> The model itself is super intelligent — the tighter loop detection means
+> we can afford to let it think more without the safety net doing most of the
+> work.
+>
+> Other effort levels and clients should work, but see less coverage.
+>
 
 ### Extensions in use
 
 For the record, the pi extensions installed on the machine this setup is
-developed and tested on. Three of them matter for *this* model specifically:
-
-- **[loop-guard](https://github.com/isr4el-silv4/loop-guard)**
+- **[loop-guard](https://github.com/isr4el-silv4/loop-guard)
   (`npm:@isr4el-silv4/loop-guard`) — detects and breaks repetition loops in
   tool calls, thinking blocks and streaming output, escalating hint → block →
   terminate. This is the interesting one here — it is the reason the compose
@@ -445,31 +452,17 @@ developed and tested on. Three of them matter for *this* model specifically:
   thinking models loop; up to `:v3` a mild `--presence-penalty 0.3` was the
   guard. But a sampler penalty only sees token probabilities — it cannot tell
   a legitimate repetition during reasoning from a genuine loop, which is
-  exactly why the DRY sampler made this model hallucinate. loop-guard works
-  one layer up, on observed behaviour: identical tool calls, cycling tool
-  sequences, stagnant results, repeated reasoning lines. With it running the
-  sampler penalty is redundant, so it goes to 0.0 and buys maximum code
-  fidelity instead. It also raised the usable reasoning
-  effort from `medium` to `high`: more thinking means more opportunity to
-  loop, and that cost no longer has to be paid by keeping the effort low.
+  exactly why the DRY sampler made this model hallucinate.
+
+  The original `pi` agent uses loop-guard, but it is too sensitive — it
+  escalates legitimate reasoning repetition to block/terminate too eagerly. oh
+  my pi has a better loop breaker, more precise and less aggressive. With the
+  improved breaker, `medium` reasoning effort is comfortable (previously only
+  `high` worked reliably, because longer reasoning meant more opportunity
+  to loop, and the old loop guard had to stay on high alert).
+
   Note this is a rationale, not a measured result: no loop rate was
   benchmarked with and without it.
-- **[pi-effort](https://pi.dev/packages/pi-effort)** — reasoning effort
-  control; `high` here, see the testing note above.
-- **[pi-subagents](https://pi.dev/packages/pi-subagents)** — delegation and
-  multi-agent workflows, capped at 2 concurrent to match the server's 3 slots
-  (see [above](#subagent-parallelism-and-timeouts-pi-subagents-extension)).
-- **[pi-lens](https://pi.dev/packages/pi-lens)** — LSP diagnostics and
-  navigation, language-specific linters and type-checkers on every write/edit,
-  ast-grep and tree-sitter structural rules, `symbol_search` over a warm word
-  index, and a read-guard that blocks edits to files the agent has not read.
-  The reason this earns a place in a *local-model* setup: every correctness
-  check it answers deterministically is one the model does not have to spend
-  tokens on. At ~45 tok/s with a thinking model, a "write, run the type
-  checker, read the error, fix" round-trip is minutes; a compiler-grade
-  diagnostic delivered inline at edit time is free. The cheaper your tokens,
-  the less this matters — which is exactly why it matters more here than on a
-  fast cloud model.
 - **[pi-memory](https://pi.dev/packages/pi-memory)** — semantic search over
   daily logs and memory files. Related to the same constraint from the other
   side: dynamic VBR disables the host-RAM prompt cache (see
@@ -502,7 +495,7 @@ tested with this repo — copy them into `~/.pi/agent/` as needed:
 |---|---|---|
 | `examples/pi/models.json.example` | `~/.pi/agent/models.json` | bonsai-local provider only (`apiKey: "none"`) |
 | `examples/pi/models.cloud.example` | — | bonsai-local **plus** a cloud provider with a `\<YOUR_API_KEY\>` placeholder; **never commit real keys** |
-| `examples/pi/settings.json.example` | `~/.pi/agent/settings.json` | defaults (`bonsai-27b`, thinking `high`) + the extension packages |
+| `examples/pi/settings.json.example` | `~/.pi/agent/settings.json` | defaults (`bonsai-27b`, thinking `medium`) + the extension packages |
 | `examples/pi/subagent-config.json` | `~/.pi/agent/extensions/subagent/config.json` | pi-subagents concurrency caps: 2 subagents max, 2 parallel |
 | `examples/pi/agents/worker.md.example` | `~/.pi/agent/agents/worker.md` | ejected `worker` with `timeoutMs: 3600000` (60 min) in the frontmatter |
 
@@ -515,7 +508,7 @@ pi install npm:pi-subagents
 
 Optional but used in this setup: `npm:pi-effort` (reasoning effort control),
 `npm:pi-memory` (memory files), and `npm:@isr4el-silv4/loop-guard` — the last
-one is what makes `thinking: high` and `--presence-penalty 0.0` a sensible
+one is what makes `thinking: medium` and `--presence-penalty 0.0` a sensible
 pairing; see [Extensions in use](#extensions-in-use).
 
 Apply with e.g.:
